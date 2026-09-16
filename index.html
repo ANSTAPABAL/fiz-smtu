@@ -62,7 +62,7 @@
       <section id="achievements" class="view">
         <div class="breadcrumbs">Главная <span>/</span> Достижения</div>
         <div class="page-heading"><div><h1>Спортивные достижения</h1><p>Учет разрядов, ГТО и спортивных мероприятий</p></div><button class="primary-button" id="openAchievement">+ Добавить достижение</button></div>
-        <article class="panel table-panel"><div class="achievement-tabs"><button class="filter active">Все записи</button><button class="filter">ВФСК «ГТО»</button><button class="filter">Разряды</button><button class="filter">Мероприятия</button></div><div class="table-wrap"><table><thead><tr><th>Студент</th><th>Категория</th><th>Сведения</th><th>Дата</th><th>Статус</th></tr></thead><tbody id="achievementBody"></tbody></table></div></article>
+        <article class="panel table-panel"><div class="achievement-tabs"><button class="filter active" data-achievement-filter="all">Все записи</button><button class="filter" data-achievement-filter="gto">ВФСК «ГТО»</button><button class="filter" data-achievement-filter="rank">Разряды</button><button class="filter" data-achievement-filter="event">Мероприятия</button></div><div class="table-wrap"><table><thead><tr><th>Студент</th><th>Категория</th><th>Сведения</th><th>Дата</th><th>Статус</th></tr></thead><tbody id="achievementBody"></tbody></table></div></article>
       </section>
 
       <section id="reports" class="view">
@@ -81,5 +81,6 @@
   <div class="toast" id="toast" role="status"></div>
   <script src="app.js"></script>
   <script src="group-picker.js"></script>
+  <script src="achievement-filters.js"></script>
 </body>
 </html>
