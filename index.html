@@ -6,7 +6,7 @@
   <meta name="description" content="Демонстрационный контур учета физической культуры и спорта СПбГМТУ" />
   <title>ФКиС - СПбГМТУ</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=20260917-groups" />
+  <link rel="stylesheet" href="styles.css?v=20260917-attendance" />
 </head>
 <body>
   <header class="topbar">
@@ -55,8 +55,9 @@
 
       <section id="attendance" class="view">
         <div class="breadcrumbs">Главная <span>/</span> Посещаемость</div>
-        <div class="page-heading"><div><h1>Журнал посещаемости</h1><p>Группа <span data-group-label>12509-05</span> · Практика ФКиС</p></div><div class="heading-actions"><button class="primary-button" id="saveAttendance">Сохранить отметки</button></div></div>
-        <article class="panel journal"><div class="journal-info"><label>Дата занятия <input id="lessonDate" type="date" value="2026-09-16" /></label><label>Тема <select id="lessonTopic"><option>Общая физическая подготовка</option><option>Легкая атлетика</option><option>Игровые виды спорта</option></select></label><span><b>28</b> студентов</span></div><div class="table-wrap"><table><thead><tr><th>№</th><th>Студент</th><th>Группа здоровья</th><th>Статус</th></tr></thead><tbody id="attendanceBody"></tbody></table></div></article>
+        <div class="page-heading"><div><h1>Журнал посещаемости</h1><p id="attendanceSubtitle">Группа <span data-group-label>12509-05</span> · выберите дисциплину</p></div><div class="heading-actions"><button class="primary-button" id="saveAttendance" hidden>Сохранить отметки</button></div></div>
+        <article class="panel attendance-setup" id="attendanceSetup"><div><p class="eyebrow">Новая отметка</p><h2>Выберите дисциплину</h2><p>Подтвердите дисциплину, чтобы открыть журнал и отметить присутствующих.</p><label>Дисциплина<select id="disciplineSelect"><option value="">Выберите дисциплину</option><option>Практика ФКиС</option><option>Теория и методика ФКиС</option><option>Спортивная секция</option></select></label></div><button class="primary-button" id="confirmDiscipline">Продолжить <span>→</span></button></article>
+        <article class="panel journal" id="attendanceJournal" hidden><div class="journal-info"><label>Дата занятия <input id="lessonDate" type="date" value="2026-09-16" /></label><div class="active-discipline"><span>Дисциплина</span><b id="activeDisciplineLabel"></b></div><span><b>28</b> студентов</span><button class="link-button" id="changeDiscipline">Сменить дисциплину</button></div><div class="table-wrap"><table><thead><tr><th>№</th><th>Студент</th><th>Группа здоровья</th><th>Статус</th></tr></thead><tbody id="attendanceBody"></tbody></table></div></article>
       </section>
 
       <section id="achievements" class="view">
@@ -81,7 +82,7 @@
   <div class="modal-backdrop" id="addStudentModal" hidden><div class="modal"><button class="close-modal" data-close="addStudentModal">×</button><p class="eyebrow">Новая запись</p><h2>Добавить студента</h2><label>Фамилия, имя, отчество<input id="newStudentName" placeholder="Иванов Иван Иванович" /></label><label>Группа здоровья<select id="newStudentHealth"><option>основная</option><option>подготовительная</option><option>специальная</option></select></label><div class="modal-actions"><button class="secondary-button" data-close="addStudentModal">Отмена</button><button class="primary-button" id="saveStudent">Добавить</button></div></div></div>
   <div class="tour-mask" id="tourMask" hidden aria-live="polite"><div class="tour-spotlight" id="tourSpotlight"></div><div class="tour-card"><span class="tour-count" id="tourCount">1 из 4</span><button class="close-modal" id="closeTour" aria-label="Закрыть обучение">×</button><h2 id="tourTitle"></h2><p id="tourText"></p><div class="tour-actions"><button class="link-button" id="tourSkip">Пропустить</button><button class="primary-button" id="tourNext">Далее</button></div></div></div>
   <div class="toast" id="toast" role="status"></div>
-  <script src="app.js?v=20260917-editing"></script>
+  <script src="app.js?v=20260917-attendance"></script>
   <script src="group-picker.js?v=20260917-groups"></script>
   <script src="achievement-filters.js"></script>
 </body>
