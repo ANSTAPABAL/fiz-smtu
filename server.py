@@ -1,9 +1,13 @@
 import json
 import sqlite3
 from datetime import date
+from io import BytesIO
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / "fkis.db"
@@ -42,6 +46,31 @@ class App(SimpleHTTPRequestHandler):
     def body(self): return json.loads(self.rfile.read(int(self.headers.get("Content-Length",0))) or b"{}")
     def do_GET(self):
         path=urlparse(self.path).path
+        if path=="/api/export.xlsx":
+            students=rows("SELECT name,health,attendance,theory,practice FROM students ORDER BY name")
+            wb=Workbook(); ws=wb.active; ws.title="Группа 12509-05"
+            navy="455273"; blue="517CB3"; orange="FF5500"; pale="EDF4FB"; line="D9E2F0"
+            ws.merge_cells("A1:E1"); ws["A1"]="СПбГМТУ · Учет физической культуры и спорта"; ws["A1"].font=Font(name="Fira Sans",size=16,bold=True,color="FFFFFF"); ws["A1"].fill=PatternFill("solid",fgColor=navy); ws["A1"].alignment=Alignment(horizontal="center",vertical="center"); ws.row_dimensions[1].height=32
+            ws.merge_cells("A2:E2"); ws["A2"]="Сводная ведомость группы 12509-05 · осенний семестр 2026"; ws["A2"].font=Font(name="Fira Sans",size=11,color="455273",bold=True); ws["A2"].fill=PatternFill("solid",fgColor=pale); ws["A2"].alignment=Alignment(horizontal="center"); ws.row_dimensions[2].height=23
+            headers=["Студент","Группа здоровья","Посещаемость","ТиМ ФКиС","Практика ФКиС"]
+            for col,value in enumerate(headers,1):
+                cell=ws.cell(4,col,value); cell.font=Font(name="Fira Sans",bold=True,color="FFFFFF"); cell.fill=PatternFill("solid",fgColor=blue); cell.alignment=Alignment(horizontal="center",vertical="center",wrap_text=True)
+            thin=Side(style="thin",color=line)
+            for row_idx,s in enumerate(students,5):
+                values=[s["name"],s["health"],s["attendance"]/100,s["theory"],s["practice"]]
+                for col,value in enumerate(values,1):
+                    cell=ws.cell(row_idx,col,value); cell.font=Font(name="Fira Sans",size=10,color="212529"); cell.alignment=Alignment(vertical="center",horizontal="center" if col>1 else "left"); cell.border=Border(bottom=thin)
+                    if row_idx%2: cell.fill=PatternFill("solid",fgColor="F8FAFC")
+                ws.cell(row_idx,3).number_format="0%"
+            total=len(students); start=5; end=total+4; r=end+2
+            ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=2); ws.cell(r,1,"Итоги по группе"); ws.cell(r,1).font=Font(name="Fira Sans",bold=True,color="FFFFFF"); ws.cell(r,1).fill=PatternFill("solid",fgColor=navy); ws.cell(r,1).alignment=Alignment(horizontal="center")
+            ws.cell(r,3,"Студентов"); ws.cell(r,4,total); ws.cell(r+1,3,"Средняя посещаемость"); ws.cell(r+1,4,f"=AVERAGE(C{start}:C{end})"); ws.cell(r+1,4).number_format="0%"
+            for rr in (r,r+1):
+                for cc in range(3,5): ws.cell(rr,cc).fill=PatternFill("solid",fgColor=pale); ws.cell(rr,cc).font=Font(name="Fira Sans",bold=cc==3,color="455273")
+            for col,width in {1:35,2:22,3:17,4:16,5:17}.items(): ws.column_dimensions[get_column_letter(col)].width=width
+            ws.freeze_panes="A5"; ws.auto_filter.ref=f"A4:E{end}"; ws.sheet_view.showGridLines=False
+            stream=BytesIO(); wb.save(stream); raw=stream.getvalue()
+            self.send_response(200); self.send_header("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); self.send_header("Content-Disposition","attachment; filename=fkis-12509-05.xlsx"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw); return
         if path=="/api/bootstrap":
             students=rows("SELECT *, EXISTS(SELECT 1 FROM attendance_log a WHERE a.student_id=students.id AND a.lesson_date='2026-09-16' AND a.present=1) AS present FROM students ORDER BY name")
             achievements=rows("SELECT a.id,s.name,a.category,a.details,a.record_date,a.status FROM achievements a JOIN students s ON s.id=a.student_id ORDER BY a.id DESC")
