@@ -6,7 +6,7 @@
   <meta name="description" content="Демонстрационный контур учета физической культуры и спорта СПбГМТУ" />
   <title>ФКиС - СПбГМТУ</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=20260917-tour" />
+  <link rel="stylesheet" href="styles.css?v=20260917-groups" />
 </head>
 <body>
   <header class="topbar">
@@ -14,7 +14,7 @@
       <img class="brand-mark" src="smtu-logo.svg" alt="" />
       <span><b>СПбГМТУ</b><small>Санкт-Петербургский государственный<br>морской технический университет</small></span>
     </a>
-    <div class="top-actions"><div class="group-picker"><button class="group-picker-button" id="groupPickerButton" aria-expanded="false"><span class="picker-dot"></span><span id="topGroupName">12509-05</span><span>⌄</span></button><div class="group-menu" id="groupMenu" hidden><label class="group-search"><span>⌕</span><input id="groupSearch" placeholder="Найти группу" autocomplete="off" /></label><p>Доступные группы</p><div id="groupOptions"></div></div></div><button class="text-button" id="guideStart">Инструкция</button><button class="profile-button" id="roleButton">Преподаватель <span>⌄</span></button></div>
+    <div class="top-actions"><button class="text-button" id="guideStart">Инструкция</button><button class="profile-button" id="roleButton">Преподаватель <span>⌄</span></button></div>
   </header>
 
   <div class="layout">
@@ -30,9 +30,10 @@
     </aside>
 
     <main>
+      <div class="group-picker content-group-picker" id="groupPicker"><button class="group-picker-button" id="groupPickerButton" aria-expanded="false"><span class="picker-dot"></span><span id="topGroupName">12509-05</span><span>⌄</span></button><div class="group-menu" id="groupMenu" hidden><label class="group-search"><span>⌕</span><input id="groupSearch" placeholder="Найти группу" autocomplete="off" /></label><p>Доступные группы</p><div id="groupOptions"></div></div></div>
       <section id="dashboard" class="view active-view">
         <div class="breadcrumbs">Главная <span>/</span> Учет ФКиС</div>
-        <div class="page-heading"><div><h1>Учет физической культуры и спорта</h1><p>Группа 12509-05 · осенний семестр 2026</p></div><button class="primary-button" data-go="attendance">Отметить занятие <span>→</span></button></div>
+        <div class="page-heading"><div><h1>Учет физической культуры и спорта</h1><p>Группа <span data-group-label>12509-05</span> · осенний семестр 2026</p></div><div class="heading-actions"><button class="primary-button" data-go="attendance">Отметить занятие <span>→</span></button></div></div>
         <div class="notice"><span>i</span><div><b>Работаем в тестовом контуре</b><p>28 учебных записей созданы для демонстрации. При интеграции список будет поступать из ИСУ СПбГМТУ.</p></div><button id="noticeGuide">Показать, как это работает</button></div>
         <section class="metric-grid" aria-label="Сводка по группе">
           <article><span>Студентов в группе</span><strong>28</strong><small>по тестовой базе</small></article>
@@ -48,25 +49,25 @@
 
       <section id="students" class="view">
         <div class="breadcrumbs">Главная <span>/</span> Студенты</div>
-        <div class="page-heading"><div><h1>Студенты группы 12509-05</h1><p>Тестовый список · 28 студентов</p></div><div class="table-tools"><label class="search"><span>⌕</span><input id="studentSearch" placeholder="Поиск по ФИО" /></label><button class="secondary-button" id="addStudent">+ Добавить запись</button></div></div>
+        <div class="page-heading"><div><h1>Студенты группы <span data-group-label>12509-05</span></h1><p>Тестовый список · 28 студентов</p></div><div class="heading-actions table-tools"><label class="search"><span>⌕</span><input id="studentSearch" placeholder="Поиск по ФИО" /></label><button class="secondary-button" id="addStudent">+ Добавить запись</button></div></div>
         <article class="panel table-panel"><div class="filters"><button class="filter active">Все · 28</button><button class="filter">Зачет · 21</button><button class="filter">Внимание · 4</button></div><div class="table-wrap"><table><thead><tr><th>Студент</th><th>Группа здоровья</th><th>Посещаемость</th><th>ТиМ ФКиС</th><th>Практика</th><th></th></tr></thead><tbody id="studentsBody"></tbody></table></div></article>
       </section>
 
       <section id="attendance" class="view">
         <div class="breadcrumbs">Главная <span>/</span> Посещаемость</div>
-        <div class="page-heading"><div><h1>Журнал посещаемости</h1><p>Группа 12509-05 · Практика ФКиС</p></div><button class="primary-button" id="saveAttendance">Сохранить отметки</button></div>
+        <div class="page-heading"><div><h1>Журнал посещаемости</h1><p>Группа <span data-group-label>12509-05</span> · Практика ФКиС</p></div><div class="heading-actions"><button class="primary-button" id="saveAttendance">Сохранить отметки</button></div></div>
         <article class="panel journal"><div class="journal-info"><label>Дата занятия <input id="lessonDate" type="date" value="2026-09-16" /></label><label>Тема <select id="lessonTopic"><option>Общая физическая подготовка</option><option>Легкая атлетика</option><option>Игровые виды спорта</option></select></label><span><b>28</b> студентов</span></div><div class="table-wrap"><table><thead><tr><th>№</th><th>Студент</th><th>Группа здоровья</th><th>Статус</th></tr></thead><tbody id="attendanceBody"></tbody></table></div></article>
       </section>
 
       <section id="achievements" class="view">
         <div class="breadcrumbs">Главная <span>/</span> Достижения</div>
-        <div class="page-heading"><div><h1>Спортивные достижения</h1><p>Учет разрядов, ГТО и спортивных мероприятий</p></div><button class="primary-button" id="openAchievement">+ Добавить достижение</button></div>
+        <div class="page-heading"><div><h1>Спортивные достижения</h1><p>Учет разрядов, ГТО и спортивных мероприятий</p></div><div class="heading-actions"><button class="primary-button" id="openAchievement">+ Добавить достижение</button></div></div>
         <article class="panel table-panel"><div class="achievement-tabs"><button class="filter active" data-achievement-filter="all">Все записи</button><button class="filter" data-achievement-filter="gto">ВФСК «ГТО»</button><button class="filter" data-achievement-filter="rank">Разряды</button><button class="filter" data-achievement-filter="event">Мероприятия</button></div><div class="table-wrap"><table><thead><tr><th>Студент</th><th>Категория</th><th>Сведения</th><th>Дата</th><th>Статус</th></tr></thead><tbody id="achievementBody"></tbody></table></div></article>
       </section>
 
       <section id="reports" class="view">
         <div class="breadcrumbs">Главная <span>/</span> Сводные данные</div>
-        <div class="page-heading"><div><h1>Сводные данные по группе</h1><p>12509-05 · осенний семестр 2026</p></div><button class="secondary-button" id="exportReport">⇩ Скачать XLSX</button></div>
+        <div class="page-heading"><div><h1>Сводные данные по группе</h1><p><span data-group-label>12509-05</span> · осенний семестр 2026</p></div><div class="heading-actions"><button class="secondary-button" id="exportReport">⇩ Скачать XLSX</button></div></div>
         <section class="metric-grid compact"><article><span>Основная группа</span><strong>19</strong><small>68% студентов</small></article><article><span>Подготовительная</span><strong>7</strong><small>25% студентов</small></article><article><span>Специальная</span><strong>2</strong><small>7% студентов</small></article><article><span>Участники мероприятий</span><strong>8</strong><small>за семестр</small></article></section>
         <article class="panel report-table"><div class="panel-head"><div><h2>Итоги успеваемости</h2><p>Состояние на 16 сентября 2026</p></div><span class="report-tag">Тестовые данные</span></div><div class="table-wrap"><table><thead><tr><th>Показатель</th><th>Зачет</th><th>Не зачет</th><th>Доля зачета</th></tr></thead><tbody><tr><td>Теория и методика ФКиС</td><td>24</td><td>4</td><td><span class="percent good">86%</span></td></tr><tr><td>Практика ФКиС</td><td>21</td><td>7</td><td><span class="percent good">75%</span></td></tr><tr><td>Посещаемость (норма ≥ 70%)</td><td>24</td><td>4</td><td><span class="percent warn">86%</span></td></tr></tbody></table></div></article>
       </section>
@@ -78,8 +79,8 @@
   <div class="modal-backdrop" id="addStudentModal" hidden><div class="modal"><button class="close-modal" data-close="addStudentModal">×</button><p class="eyebrow">Новая запись</p><h2>Добавить студента</h2><label>Фамилия, имя, отчество<input id="newStudentName" placeholder="Иванов Иван Иванович" /></label><label>Группа здоровья<select id="newStudentHealth"><option>основная</option><option>подготовительная</option><option>специальная</option></select></label><div class="modal-actions"><button class="secondary-button" data-close="addStudentModal">Отмена</button><button class="primary-button" id="saveStudent">Добавить</button></div></div></div>
   <div class="tour-mask" id="tourMask" hidden aria-live="polite"><div class="tour-spotlight" id="tourSpotlight"></div><div class="tour-card"><span class="tour-count" id="tourCount">1 из 4</span><button class="close-modal" id="closeTour" aria-label="Закрыть обучение">×</button><h2 id="tourTitle"></h2><p id="tourText"></p><div class="tour-actions"><button class="link-button" id="tourSkip">Пропустить</button><button class="primary-button" id="tourNext">Далее</button></div></div></div>
   <div class="toast" id="toast" role="status"></div>
-  <script src="app.js?v=20260917-tour"></script>
-  <script src="group-picker.js"></script>
+  <script src="app.js?v=20260917-groups"></script>
+  <script src="group-picker.js?v=20260917-groups"></script>
   <script src="achievement-filters.js"></script>
 </body>
 </html>
