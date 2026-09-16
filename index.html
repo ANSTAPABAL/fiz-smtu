@@ -14,7 +14,7 @@
       <img class="brand-mark" src="smtu-logo.svg" alt="" />
       <span><b>СПбГМТУ</b><small>Санкт-Петербургский государственный<br>морской технический университет</small></span>
     </a>
-    <div class="top-actions"><span class="demo-pill">Демонстрационный контур</span><button class="text-button" id="guideStart">Инструкция</button><button class="profile-button" id="roleButton">Преподаватель <span>⌄</span></button></div>
+    <div class="top-actions"><div class="group-picker"><button class="group-picker-button" id="groupPickerButton" aria-expanded="false"><span class="picker-dot"></span><span id="topGroupName">12509-05</span><span>⌄</span></button><div class="group-menu" id="groupMenu" hidden><label class="group-search"><span>⌕</span><input id="groupSearch" placeholder="Найти группу" autocomplete="off" /></label><p>Доступные группы</p><div id="groupOptions"></div></div></div><button class="text-button" id="guideStart">Инструкция</button><button class="profile-button" id="roleButton">Преподаватель <span>⌄</span></button></div>
   </header>
 
   <div class="layout">
@@ -27,7 +27,7 @@
         <button class="nav-item" data-view="achievements"><span>★</span> Достижения</button>
         <button class="nav-item" data-view="reports"><span>▤</span> Сводные данные</button>
       </nav>
-      <div class="sidebar-note"><b>12509-05</b><br><span>Осенний семестр 2026</span><button id="changeGroup">Сменить группу</button></div>
+      <div class="sidebar-note"><b id="sideGroupName">12509-05</b><br><span>Осенний семестр 2026</span><button id="changeGroup">Сменить группу</button></div>
     </aside>
 
     <main>
@@ -80,5 +80,6 @@
   <div class="tour-mask" id="tourMask" hidden><div class="tour-card"><span class="tour-count" id="tourCount">1 из 4</span><button class="close-modal" id="closeTour">×</button><h2 id="tourTitle"></h2><p id="tourText"></p><div class="tour-actions"><button class="link-button" id="tourSkip">Пропустить</button><button class="primary-button" id="tourNext">Далее</button></div></div></div>
   <div class="toast" id="toast" role="status"></div>
   <script src="app.js"></script>
+  <script src="group-picker.js"></script>
 </body>
 </html>
