@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Демонстрационный контур учета физической культуры и спорта СПбГМТУ" />
+  <title>ФКиС - СПбГМТУ</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#dashboard" aria-label="СПбГМТУ, перейти на главную">
+      <span class="brand-mark" aria-hidden="true">⚓</span>
+      <span><b>СПбГМТУ</b><small>Санкт-Петербургский государственный<br>морской технический университет</small></span>
+    </a>
+    <div class="top-actions"><span class="demo-pill">Демонстрационный контур</span><button class="text-button" id="guideStart">Инструкция</button><button class="profile-button" id="roleButton">Преподаватель <span>⌄</span></button></div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="section-label">ФКиС</p>
+      <nav aria-label="Основная навигация">
+        <button class="nav-item active" data-view="dashboard"><span>▦</span> Обзор</button>
+        <button class="nav-item" data-view="students"><span>♙</span> Студенты</button>
+        <button class="nav-item" data-view="attendance"><span>✓</span> Посещаемость</button>
+        <button class="nav-item" data-view="achievements"><span>★</span> Достижения</button>
+        <button class="nav-item" data-view="reports"><span>▤</span> Сводные данные</button>
+      </nav>
+      <div class="sidebar-note"><b>12509-05</b><br><span>Осенний семестр 2026</span><button id="changeGroup">Сменить группу</button></div>
+    </aside>
+
+    <main>
+      <section id="dashboard" class="view active-view">
+        <div class="breadcrumbs">Главная <span>/</span> Учет ФКиС</div>
+        <div class="page-heading"><div><h1>Учет физической культуры и спорта</h1><p>Группа 12509-05 · осенний семестр 2026</p></div><button class="primary-button" data-go="attendance">Отметить занятие <span>→</span></button></div>
+        <div class="notice"><span>i</span><div><b>Работаем в тестовом контуре</b><p>28 учебных записей созданы для демонстрации. При интеграции список будет поступать из ИСУ СПбГМТУ.</p></div><button id="noticeGuide">Показать, как это работает</button></div>
+        <section class="metric-grid" aria-label="Сводка по группе">
+          <article><span>Студентов в группе</span><strong>28</strong><small>по тестовой базе</small></article>
+          <article><span>Посещаемость за неделю</span><strong>86%</strong><small class="positive">+4% к прошлой неделе</small></article>
+          <article><span>Зачет по ФКиС</span><strong>21 / 28</strong><small>75% группы</small></article>
+          <article><span>Нуждаются во внимании</span><strong class="attention">4</strong><small>низкая посещаемость</small></article>
+        </section>
+        <section class="dashboard-grid">
+          <article class="panel attendance-panel"><div class="panel-head"><div><h2>Посещаемость</h2><p>Последние занятия</p></div><button class="link-button" data-go="attendance">Журнал →</button></div><div class="bars" aria-label="График посещаемости"><div><i style="height:69%"></i><span>Пн</span></div><div><i style="height:86%"></i><span>Вт</span></div><div><i style="height:78%"></i><span>Ср</span></div><div><i style="height:93%"></i><span>Чт</span></div><div><i style="height:86%"></i><span>Пт</span></div></div><div class="legend"><span><i></i> присутствовали</span><span><i></i> среднее значение</span></div></article>
+          <article class="panel action-panel"><div class="panel-head"><div><h2>Требуют внимания</h2><p>Студенты с посещаемостью менее 70%</p></div><button class="link-button" data-go="students">Все →</button></div><div id="attentionList"></div></article>
+        </section>
+      </section>
+
+      <section id="students" class="view">
+        <div class="breadcrumbs">Главная <span>/</span> Студенты</div>
+        <div class="page-heading"><div><h1>Студенты группы 12509-05</h1><p>Тестовый список · 28 студентов</p></div><div class="table-tools"><label class="search"><span>⌕</span><input id="studentSearch" placeholder="Поиск по ФИО" /></label><button class="secondary-button" id="addStudent">+ Добавить запись</button></div></div>
+        <article class="panel table-panel"><div class="filters"><button class="filter active">Все · 28</button><button class="filter">Зачет · 21</button><button class="filter">Внимание · 4</button></div><div class="table-wrap"><table><thead><tr><th>Студент</th><th>Группа здоровья</th><th>Посещаемость</th><th>ТиМ ФКиС</th><th>Практика</th><th></th></tr></thead><tbody id="studentsBody"></tbody></table></div></article>
+      </section>
+
+      <section id="attendance" class="view">
+        <div class="breadcrumbs">Главная <span>/</span> Посещаемость</div>
+        <div class="page-heading"><div><h1>Журнал посещаемости</h1><p>Группа 12509-05 · Практика ФКиС</p></div><button class="primary-button" id="saveAttendance">Сохранить отметки</button></div>
+        <article class="panel journal"><div class="journal-info"><label>Дата занятия <input type="date" value="2026-09-16" /></label><label>Тема <select><option>Общая физическая подготовка</option><option>Легкая атлетика</option><option>Игровые виды спорта</option></select></label><span><b>28</b> студентов</span></div><div class="table-wrap"><table><thead><tr><th>№</th><th>Студент</th><th>Группа здоровья</th><th>Статус</th></tr></thead><tbody id="attendanceBody"></tbody></table></div></article>
+      </section>
+
+      <section id="achievements" class="view">
+        <div class="breadcrumbs">Главная <span>/</span> Достижения</div>
+        <div class="page-heading"><div><h1>Спортивные достижения</h1><p>Учет разрядов, ГТО и спортивных мероприятий</p></div><button class="primary-button" id="openAchievement">+ Добавить достижение</button></div>
+        <article class="panel table-panel"><div class="achievement-tabs"><button class="filter active">Все записи</button><button class="filter">ВФСК «ГТО»</button><button class="filter">Разряды</button><button class="filter">Мероприятия</button></div><div class="table-wrap"><table><thead><tr><th>Студент</th><th>Категория</th><th>Сведения</th><th>Дата</th><th>Статус</th></tr></thead><tbody id="achievementBody"></tbody></table></div></article>
+      </section>
+
+      <section id="reports" class="view">
+        <div class="breadcrumbs">Главная <span>/</span> Сводные данные</div>
+        <div class="page-heading"><div><h1>Сводные данные по группе</h1><p>12509-05 · осенний семестр 2026</p></div><button class="secondary-button" id="exportReport">⇩ Скачать XLSX</button></div>
+        <section class="metric-grid compact"><article><span>Основная группа</span><strong>19</strong><small>68% студентов</small></article><article><span>Подготовительная</span><strong>7</strong><small>25% студентов</small></article><article><span>Специальная</span><strong>2</strong><small>7% студентов</small></article><article><span>Участники мероприятий</span><strong>8</strong><small>за семестр</small></article></section>
+        <article class="panel report-table"><div class="panel-head"><div><h2>Итоги успеваемости</h2><p>Состояние на 16 сентября 2026</p></div><span class="report-tag">Тестовые данные</span></div><div class="table-wrap"><table><thead><tr><th>Показатель</th><th>Зачет</th><th>Не зачет</th><th>Доля зачета</th></tr></thead><tbody><tr><td>Теория и методика ФКиС</td><td>24</td><td>4</td><td><span class="percent good">86%</span></td></tr><tr><td>Практика ФКиС</td><td>21</td><td>7</td><td><span class="percent good">75%</span></td></tr><tr><td>Посещаемость (норма ≥ 70%)</td><td>24</td><td>4</td><td><span class="percent warn">86%</span></td></tr></tbody></table></div></article>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="studentModal" hidden><div class="modal"><button class="close-modal" data-close="studentModal">×</button><p class="eyebrow">Карточка студента</p><h2 id="modalStudentName">Иванов Илья Андреевич</h2><div id="studentDetails"></div><div class="modal-actions"><button class="secondary-button" data-close="studentModal">Закрыть</button><button class="primary-button">Изменить данные</button></div></div></div>
+  <div class="modal-backdrop" id="achievementModal" hidden><div class="modal"><button class="close-modal" data-close="achievementModal">×</button><p class="eyebrow">Новая запись</p><h2>Добавить спортивное достижение</h2><label>Студент<select id="achievementStudent"></select></label><label>Категория<select><option>ВФСК «ГТО»</option><option>Спортивный разряд</option><option>Спортивное мероприятие</option></select></label><label>Сведения<input placeholder="Например, золотой знак ГТО" /></label><div class="modal-actions"><button class="secondary-button" data-close="achievementModal">Отмена</button><button class="primary-button" id="saveAchievement">Добавить запись</button></div></div></div>
+  <div class="tour-mask" id="tourMask" hidden><div class="tour-card"><span class="tour-count" id="tourCount">1 из 4</span><button class="close-modal" id="closeTour">×</button><h2 id="tourTitle"></h2><p id="tourText"></p><div class="tour-actions"><button class="link-button" id="tourSkip">Пропустить</button><button class="primary-button" id="tourNext">Далее</button></div></div></div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
