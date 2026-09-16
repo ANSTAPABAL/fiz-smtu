@@ -8,10 +8,9 @@ function drawGroups(query=''){
 function openGroups(){drawGroups();pick('#groupMenu').hidden=false;pick('#groupPickerButton').setAttribute('aria-expanded','true');pick('#groupSearch').focus()}
 function closeGroups(){pick('#groupMenu').hidden=true;pick('#groupPickerButton').setAttribute('aria-expanded','false')}
 pick('#groupPickerButton').onclick=()=>pick('#groupMenu').hidden?openGroups():closeGroups();
-pick('#changeGroup').onclick=openGroups;
 pick('#groupSearch').oninput=e=>drawGroups(e.target.value);
 document.addEventListener('click',e=>{
   const choice=e.target.closest('[data-group]');
-  if(choice){activeGroup=choice.dataset.group;pick('#topGroupName').textContent=activeGroup;pick('#sideGroupName').textContent=activeGroup;closeGroups();window.toast?.(`Выбрана группа ${activeGroup}. В тестовом контуре показываются общие данные.`)}
-  else if(!e.target.closest('.group-picker')&&!e.target.closest('#changeGroup'))closeGroups();
+  if(choice){activeGroup=choice.dataset.group;pick('#topGroupName').textContent=activeGroup;closeGroups();window.toast?.(`Выбрана группа ${activeGroup}. В тестовом контуре показываются общие данные.`)}
+  else if(!e.target.closest('.group-picker'))closeGroups();
 });
