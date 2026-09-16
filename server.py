@@ -91,9 +91,23 @@ class App(SimpleHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); self.send_header("Content-Disposition","attachment; filename=fkis-12509-05.xlsx"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw); return
         if path=="/api/bootstrap":
             students=rows("SELECT *, EXISTS(SELECT 1 FROM attendance_log a WHERE a.student_id=students.id AND a.lesson_date='2026-09-16' AND a.present=1) AS present FROM students WHERE group_code=? ORDER BY name", (group_code,))
-            achievements=rows("SELECT a.id,s.name,a.category,a.details,a.record_date,a.status FROM achievements a JOIN students s ON s.id=a.student_id WHERE s.group_code=? ORDER BY a.id DESC", (group_code,))
+            achievements=rows("SELECT a.id,a.student_id,s.name,a.category,a.details,a.record_date,a.status FROM achievements a JOIN students s ON s.id=a.student_id WHERE s.group_code=? ORDER BY a.id DESC", (group_code,))
             self.send_json({"students":students,"achievements":achievements,"group":group_code,"today":"2026-09-16"}); return
         return super().do_GET()
+    def do_PUT(self):
+        path=urlparse(self.path).path; data=self.body(); con=connect()
+        try:
+            if path.startswith("/api/students/"):
+                student_id=int(path.rsplit("/",1)[1])
+                con.execute("UPDATE students SET name=?,health=?,attendance=?,theory=?,practice=? WHERE id=?",(data["name"].strip(),data["health"],int(data["attendance"]),data["theory"],data["practice"],student_id))
+                con.commit(); self.send_json({"ok":True}); return
+            if path.startswith("/api/achievements/"):
+                achievement_id=int(path.rsplit("/",1)[1])
+                con.execute("UPDATE achievements SET student_id=?,category=?,details=?,record_date=?,status=? WHERE id=?",(int(data["student_id"]),data["category"],data["details"].strip(),data["record_date"],data["status"],achievement_id))
+                con.commit(); self.send_json({"ok":True}); return
+            self.send_json({"error":"Неизвестный запрос"},404)
+        except (KeyError, ValueError, sqlite3.Error, json.JSONDecodeError) as e: con.rollback(); self.send_json({"error":str(e)},400)
+        finally: con.close()
     def do_POST(self):
         path=urlparse(self.path).path; data=self.body(); con=connect()
         try:
