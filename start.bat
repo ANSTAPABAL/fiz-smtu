@@ -4,6 +4,8 @@ cd /d "%~dp0"
 
 where py >nul 2>nul
 if %errorlevel%==0 (
+  py -3 import_rosters.py "%USERPROFILE%\Downloads"
+  if %errorlevel% neq 0 echo Ne udalos importirovat spiski. Proverte Python i Excel fayly.
   start "FKiS SQLite server" /min py -3 server.py
 ) else (
   where python >nul 2>nul
@@ -12,6 +14,8 @@ if %errorlevel%==0 (
     pause
     exit /b 1
   )
+  python import_rosters.py "%USERPROFILE%\Downloads"
+  if %errorlevel% neq 0 echo Ne udalos importirovat spiski. Proverte Python i Excel fayly.
   start "FKiS SQLite server" /min python server.py
 )
 

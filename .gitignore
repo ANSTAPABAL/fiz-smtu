@@ -1,2 +1,5 @@
 tmp-page-*.jpg
 fkis.db
+__pycache__/
+*.py[cod]
+tmp/
