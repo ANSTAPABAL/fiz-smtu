@@ -25,6 +25,7 @@ const displayDate = value => {
 };
 async function api(url, method = 'GET', body) {
   const response = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body:body && JSON.stringify(body)});
+  if (response.status === 401 && !location.pathname.startsWith('/login')) { location.assign('/login'); throw new Error('Сессия завершена. Войдите снова.'); }
   if (!response.ok) {
     let message = 'Ошибка запроса';
     try { message = (await response.json()).error || message; } catch {}
@@ -32,6 +33,13 @@ async function api(url, method = 'GET', body) {
   }
   return response.json();
 }
+api('/api/session').then(session => {
+  const signOut = $('#signOut');
+  if (session.auth_enabled && session.authenticated && signOut) {
+    signOut.hidden = false;
+    signOut.onclick = async () => { await fetch('/api/logout', {method:'POST'}); location.assign('/login'); };
+  }
+}).catch(() => {});
 function toast(message) {
   $('#toast').textContent = message;
   $('#toast').classList.add('show');
