@@ -138,13 +138,14 @@ function renderGroupRoster() {
     const records=achievements.filter(item=>Number(item.student_id)===Number(student.id));
     const active=records.filter(item=>!['исключен','не действует'].includes(String(item.status).toLowerCase()));
     const teams=active.filter(item=>categoryKey(item.category)==='team').map(item=>item.team_name||item.details).filter(Boolean);
+    const sections=active.filter(item=>categoryKey(item.category)==='section').map(item=>item.sport_type||item.details).filter(Boolean);
     const gto=active.filter(item=>categoryKey(item.category)==='gto').map(item=>item.distinction).filter(Boolean);
     const ranks=active.filter(item=>categoryKey(item.category)==='rank').map(item=>item.distinction).filter(Boolean);
     const events=records.filter(item=>categoryKey(item.category)==='event');
     const achievement=events.map(item=>[item.details,item.event_result||item.participant_role].filter(Boolean).join(': ')).filter(Boolean);
     const initialsName=student.name.split(/\s+/).map((part,i)=>i?`${part[0]}.`:part).join(' ');
-    return `<tr><td>${index+1}</td><td><button class="detail-button" data-student="${student.id}">${escapeHtml(initialsName)}</button></td><td>${escapeHtml(student.health||'не указана')}</td><td>${escapeHtml(student.theory||'не указано')}</td><td>${escapeHtml(student.practice||'не указано')}</td><td>не указано</td><td>${escapeHtml(teams.join(', ')||'—')}</td><td>${escapeHtml(gto.join(', ')||'—')}</td><td>${escapeHtml(ranks.join(', ')||'—')}</td><td>${escapeHtml(achievement.join('; ')||'—')}</td><td>${events.filter(item=>item.participant_role==='Участник').length}</td><td>${events.filter(item=>item.participant_role==='Волонтер').length}</td></tr>`;
-  }).join('')||'<tr><td colspan="12" class="empty-state">Список группы пуст.</td></tr>';
+    return `<tr><td>${index+1}</td><td><button class="detail-button" data-student="${student.id}">${escapeHtml(initialsName)}</button></td><td>${escapeHtml(student.health||'не указана')}</td><td>${escapeHtml(student.theory||'не указано')}</td><td>${escapeHtml(student.practice||'не указано')}</td><td>не указано</td><td>${escapeHtml(teams.join(', ')||'—')}</td><td>${escapeHtml(sections.join(', ')||'—')}</td><td>${escapeHtml(gto.join(', ')||'—')}</td><td>${escapeHtml(ranks.join(', ')||'—')}</td><td>${escapeHtml(achievement.join('; ')||'—')}</td><td>${events.filter(item=>item.participant_role==='Участник').length}</td><td>${events.filter(item=>item.participant_role==='Волонтер').length}</td></tr>`;
+  }).join('')||'<tr><td colspan="13" class="empty-state">Список группы пуст.</td></tr>';
 }
 function renderPhysical() {
   const position = new Map(students.map((student, index) => [student.id, index + 1]));
