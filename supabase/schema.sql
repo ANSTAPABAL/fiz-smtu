@@ -6,7 +6,8 @@ CREATE TABLE public.academic_groups (
   display_code text,
   faculty text,
   direction text,
-  course integer
+  course integer,
+  sports_organizer text
 );
 
 CREATE TABLE public.students (

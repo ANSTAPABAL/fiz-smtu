@@ -117,6 +117,7 @@ achievement_summary AS (
   WHERE s.group_code=p.group_code GROUP BY a.category
 )
 SELECT json_build_object(
+  'sports_organizer', (SELECT g.sports_organizer FROM academic_groups g CROSS JOIN params p WHERE g.group_code=p.group_code),
   'students', COALESCE((SELECT json_agg(to_jsonb(s) ORDER BY COALESCE(s.list_position,2147483647),s.name) FROM selected_students s),'[]'::json),
   'achievements', COALESCE((SELECT json_agg(json_build_object(
     'id',a.id,'student_id',a.student_id,'name',s.name,'category',a.category,
@@ -163,7 +164,7 @@ def share_read_connection(handler):
     @wraps(handler)
     def wrapped(self, *args, **kwargs):
         path = urlparse(self.path).path
-        if not DATABASE_URL or path not in ("/api/groups", "/api/bootstrap", "/api/export.xlsx"):
+        if not DATABASE_URL or path not in ("/api/groups", "/api/bootstrap", "/api/export.xlsx", "/api/consolidated", "/api/consolidated.xlsx"):
             return handler(self, *args, **kwargs)
         connection = _new_connection()
         token = _REQUEST_CONNECTION.set(connection)
@@ -183,6 +184,7 @@ def init_db():
             if missing:
                 raise RuntimeError("В удалённой базе отсутствуют таблицы: " + ", ".join(missing) + ". Выполните SQL из supabase/schema.sql.")
             con.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS email text")
+            con.execute("ALTER TABLE academic_groups ADD COLUMN IF NOT EXISTS sports_organizer text")
             con.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS faculty text")
             con.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS course integer")
             con.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS sport_before text")
@@ -213,7 +215,7 @@ def init_db():
     """)
     group_columns = [r[1] for r in con.execute("PRAGMA table_info(academic_groups)")]
     for name, declaration in {
-        "display_code": "TEXT", "faculty": "TEXT", "direction": "TEXT", "course": "INTEGER"
+        "display_code": "TEXT", "faculty": "TEXT", "direction": "TEXT", "course": "INTEGER", "sports_organizer": "TEXT"
     }.items():
         if name not in group_columns:
             con.execute(f"ALTER TABLE academic_groups ADD COLUMN {name} {declaration}")
@@ -271,6 +273,71 @@ def rows(sql, args=()):
     finally:
         if shared is None:
             con.close()
+
+def empty_consolidated_row(label, level):
+    return {"level":level,"label":label,"total":0,"main_health":0,"prep_health":0,"special_health":0,
+        "theory_credit":0,"theory_no_credit":0,"practice_credit":0,"practice_no_credit":0,"overall_grade":None,
+        "teams":0,"sections":0,"gto_gold":0,"gto_silver":0,"gto_bronze":0,"gto_none":0,"ms":0,"kms":0,
+        "rank1":0,"rank2":0,"rank3":0,"rank_none":0,"sport_achievements":0,"participants":0,"volunteers":0}
+
+def build_consolidated_rows(students, achievements):
+    faculties={}; courses={}; all_students=empty_consolidated_row("СПбГМТУ","total")
+    def add_student(bucket, student):
+        bucket["total"]+=1
+        health={"основная":"main_health","подготовительная":"prep_health","специальная":"special_health"}.get(str(student.get("health") or "").lower())
+        if health: bucket[health]+=1
+        for source,target in (("theory","theory"),("practice","practice")):
+            value=str(student.get(source) or "").lower()
+            if value=="зачет": bucket[target+"_credit"]+=1
+            elif value=="не зачет": bucket[target+"_no_credit"]+=1
+    by_student={}
+    for student in students:
+        faculty=str(student.get("faculty") or "Подразделение не указано")
+        course=student.get("course")
+        course_label=f"{course} курс" if course else "Курс не указан"
+        faculty_row=faculties.setdefault(faculty,empty_consolidated_row(faculty,"faculty"))
+        course_row=courses.setdefault((faculty,course_label),empty_consolidated_row(course_label,"course"))
+        by_student[student["id"]]=(faculty_row,course_row,all_students)
+        add_student(faculty_row,student); add_student(course_row,student); add_student(all_students,student)
+    gto_students=set(); rank_students=set()
+    for award in achievements:
+        targets=by_student.get(award.get("student_id"))
+        if not targets: continue
+        category=str(award.get("category") or "").lower()
+        distinction=str(award.get("distinction") or "").lower()
+        status=str(award.get("status") or "").lower()
+        active=status not in ("исключен","не действует")
+        for target in targets:
+            if "гто" in category and active:
+                gto_students.add(award["student_id"])
+                if "золот" in distinction: target["gto_gold"]+=1
+                elif "серебр" in distinction: target["gto_silver"]+=1
+                elif "бронз" in distinction: target["gto_bronze"]+=1
+            elif ("разряд" in category or "звание" in category) and active:
+                rank_students.add(award["student_id"])
+                if "кандидат" in distinction or "кмс" in distinction: target["kms"]+=1
+                elif "мастер" in distinction or "мс" in distinction: target["ms"]+=1
+                elif "перв" in distinction or distinction in ("1", "i" ) or "i разряд" in distinction: target["rank1"]+=1
+                elif "втор" in distinction or distinction in ("2", "ii") or "ii разряд" in distinction: target["rank2"]+=1
+                elif "трет" in distinction or distinction in ("3", "iii") or "iii разряд" in distinction: target["rank3"]+=1
+            elif "сборная" in category and active: target["teams"]+=1
+            elif "секция" in category and active: target["sections"]+=1
+            if "мероприят" in category:
+                if award.get("event_result"):
+                    target["sport_achievements"]+=1
+                if award.get("participant_role")=="Участник": target["participants"]+=1
+                elif award.get("participant_role")=="Волонтер": target["volunteers"]+=1
+    for student_id,targets in by_student.items():
+        for target in targets:
+            if student_id not in gto_students: target["gto_none"]+=1
+            if student_id not in rank_students: target["rank_none"]+=1
+    result=[]
+    sort_course=lambda key:(not key[1][0].isdigit(),int(key[1].split()[0]) if key[1][0].isdigit() else 99)
+    for faculty in sorted(faculties):
+        result.extend(courses[key] for key in sorted((key for key in courses if key[0]==faculty),key=sort_course))
+        result.append(faculties[faculty])
+    if all_students["total"]: result.append({**all_students,"level":"total","label":"СПбГМТУ"})
+    return result
 
 def decode_pdf(value):
     if not value:
@@ -396,8 +463,9 @@ class App(SimpleHTTPRequestHandler):
             student = rows("SELECT s.id,s.name,s.health,s.attendance,s.theory,s.practice,s.group_code,s.isu_id,s.enrollment_number,s.study_form,s.list_position,s.birth_date,s.theory_date,s.faculty,s.course,s.sport_before,s.elective,g.display_code FROM students s LEFT JOIN academic_groups g ON g.group_code=s.group_code WHERE s.id=?",(student_id,))
             if not student: self.send_json({"error":"Карточка студента не найдена."},404); return
             achievements = rows("SELECT category,details,record_date,status,sport_type,distinction,age_group,participant_role,event_result,team_name FROM achievements WHERE student_id=? ORDER BY id DESC",(student_id,))
-            physical = rows("SELECT record_date,exercise,result FROM physical_tests WHERE student_id=? ORDER BY record_date DESC",(student_id,))
-            self.send_json({"registered":True,"student":student[0],"achievements":achievements,"physical_tests":physical}); return
+            physical = rows("SELECT record_date,exercise,result,grade FROM physical_tests WHERE student_id=? ORDER BY record_date DESC",(student_id,))
+            attendance=rows("SELECT COUNT(*) AS total,SUM(CASE WHEN present THEN 1 ELSE 0 END) AS present FROM attendance_log WHERE student_id=?",(student_id,))[0]
+            self.send_json({"registered":True,"student":student[0],"achievements":achievements,"physical_tests":physical,"attendance":attendance}); return
         if path == "/api/my-submissions":
             if self.role_required("Студент"): return
             session=self.session_info()
@@ -415,31 +483,39 @@ class App(SimpleHTTPRequestHandler):
             self.send_json({"disciplines":FITNESS_DISCIPLINES,"lesson_types":LESSON_TYPES,"elective_activities":FITNESS_ACTIVITIES}); return
         if path == "/api/consolidated":
             if self.role_required("Преподаватель кафедры ФВ","Сотрудник ССК «Армада»","Ответственный исполнитель кафедры ФВ"): return
-            course_rows=rows("SELECT s.id,g.course,s.health,s.theory,s.practice FROM students s LEFT JOIN academic_groups g ON g.group_code=s.group_code")
-            awards=rows("SELECT s.id,g.course,a.category,a.participant_role,a.status FROM achievements a JOIN students s ON s.id=a.student_id LEFT JOIN academic_groups g ON g.group_code=s.group_code")
-            grouped={}; course_by_student={}
-            for student in course_rows:
-                course=student.get("course") or 0; key=str(course) if course else "0"; course_by_student[student["id"]]=key
-                item=grouped.setdefault(key,{"course":course or "Курс не указан","total":0,"main_health":0,"prep_health":0,"special_health":0,"theory_credit":0,"theory_no_credit":0,"practice_credit":0,"practice_no_credit":0,"teams":0,"sections":0,"gto":0,"ranks":0,"participants":0,"volunteers":0})
-                item["total"]+=1
-                health={"основная":"main_health","подготовительная":"prep_health","специальная":"special_health"}.get(str(student.get("health","")).lower())
-                if health: item[health]+=1
-                for source,target in (("theory","theory"),("practice","practice")):
-                    value=str(student.get(source,"")).lower()
-                    if value=="зачет": item[target+"_credit"]+=1
-                    elif value=="не зачет": item[target+"_no_credit"]+=1
-            for award in awards:
-                item=grouped.get(course_by_student.get(award["id"],"0"))
-                if not item: continue
-                category=str(award.get("category","")).lower()
-                if "гто" in category: item["gto"]+=1
-                elif "разряд" in category or "звание" in category: item["ranks"]+=1
-                elif "сборная" in category and award.get("status")!="Исключен": item["teams"]+=1
-                elif "секция" in category and award.get("status")!="Исключен": item["sections"]+=1
-                if "мероприят" in category:
-                    if award.get("participant_role")=="Участник": item["participants"]+=1
-                    elif award.get("participant_role")=="Волонтер": item["volunteers"]+=1
-            self.send_json({"courses":sorted(grouped.values(),key=lambda row:(not str(row["course"]).isdigit(),int(row["course"]) if str(row["course"]).isdigit() else 99))}); return
+            course_rows=rows("SELECT s.id,COALESCE(g.faculty,s.faculty) AS faculty,COALESCE(g.course,s.course) AS course,s.health,s.theory,s.practice FROM students s LEFT JOIN academic_groups g ON g.group_code=s.group_code")
+            awards=rows("SELECT a.student_id,a.category,a.distinction,a.participant_role,a.status FROM achievements a")
+            self.send_json({"rows":build_consolidated_rows(course_rows,awards)}); return
+        if path == "/api/consolidated.xlsx":
+            if self.role_required("Преподаватель кафедры ФВ","Сотрудник ССК «Армада»","Ответственный исполнитель кафедры ФВ"): return
+            course_rows=rows("SELECT s.id,COALESCE(g.faculty,s.faculty) AS faculty,COALESCE(g.course,s.course) AS course,s.health,s.theory,s.practice FROM students s LEFT JOIN academic_groups g ON g.group_code=s.group_code")
+            awards=rows("SELECT a.student_id,a.category,a.distinction,a.participant_role,a.event_result,a.status FROM achievements a")
+            data=build_consolidated_rows(course_rows,awards)
+            headers=["Подразделение / курс","Всего","Основная","Подготовительная","Специальная","ТиМ: зачет","ТиМ: не зачет","Практика: зачет","Практика: не зачет","Общая оценка","Сборная","Секции","ГТО: золото","ГТО: серебро","ГТО: бронза","ГТО: отсутствует","МС","КМС","I разряд","II разряд","III разряд","Разряд: отсутствует","Достижения с результатом","Участники","Волонтеры"]
+            fields=["label","total","main_health","prep_health","special_health","theory_credit","theory_no_credit","practice_credit","practice_no_credit","overall_grade","teams","sections","gto_gold","gto_silver","gto_bronze","gto_none","ms","kms","rank1","rank2","rank3","rank_none","sport_achievements","participants","volunteers"]
+            wb=Workbook(); sheet=wb.active; sheet.title="Сводные данные"
+            navy="455273"; blue="517CB3"; pale="EDF4FB"; line="D9E2F0"; white="FFFFFF"; thin=Side(style="thin",color=line)
+            sheet.merge_cells(start_row=1,start_column=1,end_row=1,end_column=len(headers)); sheet.cell(1,1,"СПбГМТУ · Сводные данные ФКиС")
+            sheet.cell(1,1).font=Font(name="Fira Sans",size=16,bold=True,color=white); sheet.cell(1,1).fill=PatternFill("solid",fgColor=navy); sheet.cell(1,1).alignment=Alignment(horizontal="center")
+            sheet.merge_cells(start_row=2,start_column=1,end_row=2,end_column=len(headers)); sheet.cell(2,1,f"По загруженным группам · {date.today().strftime('%d.%m.%Y')} · без персональных данных")
+            sheet.cell(2,1).font=Font(name="Fira Sans",size=11,bold=True,color=navy); sheet.cell(2,1).fill=PatternFill("solid",fgColor=pale); sheet.cell(2,1).alignment=Alignment(horizontal="center")
+            for col,label in enumerate(headers,1):
+                cell=sheet.cell(4,col,label); cell.font=Font(name="Fira Sans",bold=True,color=white); cell.fill=PatternFill("solid",fgColor=blue); cell.alignment=Alignment(horizontal="center",vertical="center",wrap_text=True); cell.border=Border(bottom=thin)
+            for row_index,item in enumerate(data,5):
+                values=[item.get(field) for field in fields]
+                for col,value in enumerate(values,1):
+                    cell=sheet.cell(row_index,col,"—" if value is None else value); cell.font=Font(name="Fira Sans",size=10,color=navy if item["level"]!="course" else "212529",bold=item["level"]!="course")
+                    if isinstance(value,str): cell.data_type="s"
+                    cell.alignment=Alignment(vertical="center",wrap_text=True,horizontal="left" if col==1 else "center"); cell.border=Border(bottom=thin)
+                    if item["level"]=="faculty": cell.fill=PatternFill("solid",fgColor=pale)
+                    elif item["level"]=="total": cell.fill=PatternFill("solid",fgColor=navy); cell.font=Font(name="Fira Sans",size=10,bold=True,color=white)
+                sheet.row_dimensions[row_index].height=26
+            sheet.sheet_view.showGridLines=False; sheet.freeze_panes="B5"; sheet.row_dimensions[4].height=42
+            if data: sheet.auto_filter.ref=f"A4:{get_column_letter(len(headers))}{len(data)+4}"
+            sheet.column_dimensions["A"].width=48
+            for col in range(2,len(headers)+1): sheet.column_dimensions[get_column_letter(col)].width=17
+            stream=BytesIO(); wb.save(stream); raw=stream.getvalue()
+            self.send_response(200); self.send_header("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); self.send_header("Content-Disposition","attachment; filename=fkis-summary.xlsx"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw); return
         group_code=query.get("group", [DEFAULT_GROUP])[0]
         if path in ("/api/groups","/api/bootstrap","/api/export.xlsx") and self.role_required("Преподаватель кафедры ФВ","Сотрудник ССК «Армада»","Ответственный исполнитель кафедры ФВ"): return
         if path == "/api/groups":
@@ -450,6 +526,8 @@ class App(SimpleHTTPRequestHandler):
             students=rows("SELECT s.*,CASE WHEN COUNT(a.id)>0 THEN ROUND(100.0*SUM(CASE WHEN a.present THEN 1 ELSE 0 END)/COUNT(a.id)) ELSE s.attendance END AS attendance_pct FROM students s LEFT JOIN attendance_log a ON a.student_id=s.id WHERE s.group_code=? GROUP BY s.id ORDER BY COALESCE(s.list_position,2147483647),s.name", (group_code,))
             achievements=rows("SELECT a.*,s.name,s.isu_id FROM achievements a JOIN students s ON s.id=a.student_id WHERE s.group_code=? ORDER BY s.list_position,a.id", (group_code,))
             tests=rows("SELECT p.*,s.name,s.isu_id,s.list_position FROM physical_tests p JOIN students s ON s.id=p.student_id WHERE s.group_code=? ORDER BY s.list_position,p.record_date,p.id", (group_code,))
+            group_meta=rows("SELECT sports_organizer FROM academic_groups WHERE group_code=?",(group_code,))
+            sports_organizer=group_meta[0]["sports_organizer"] if group_meta else None
             wb=Workbook(); overview=wb.active; overview.title="Карточка группы"
             roster=wb.create_sheet("Сводная ведомость"); fitness=wb.create_sheet("Физподготовка"); sport=wb.create_sheet("Достижения"); attendance=wb.create_sheet("Посещаемость")
             navy="455273"; blue="517CB3"; pale="EDF4FB"; line="D9E2F0"; white="FFFFFF"; ink="212529"
@@ -486,13 +564,15 @@ class App(SimpleHTTPRequestHandler):
             roster_rows=[]
             for index,s in enumerate(students,1):
                 records=[a for a in achievements if a["student_id"]==s["id"]]
-                team=next((a for a in records if "сборная" in a["category"].lower() or "секция" in a["category"].lower()),None)
-                gto_row=next((a for a in records if "гто" in a["category"].lower()),None)
-                rank=next((a for a in records if "разряд" in a["category"].lower() or "звание" in a["category"].lower()),None)
+                active=[a for a in records if a["status"] not in ("Исключен","Не действует")]
+                teams=[a["team_name"] for a in active if "сборная" in a["category"].lower() and a["team_name"]]
+                sections=[a["sport_type"] for a in active if "секция" in a["category"].lower() and a["sport_type"]]
+                gto_rows=[a for a in active if "гто" in a["category"].lower()]
+                rank_rows=[a for a in active if "разряд" in a["category"].lower() or "звание" in a["category"].lower()]
                 event_rows=[a for a in records if "мероприят" in a["category"].lower()]
-                roster_rows.append([index,s["isu_id"],s["enrollment_number"],s["name"],s["birth_date"],s["health"],s["theory"],s["theory_date"],s["practice"],s["attendance_pct"]/100,team["team_name"] if team else "—",gto_row["distinction"] if gto_row else "—",rank["distinction"] if rank else "—","; ".join(a["details"] or a["event_result"] or "" for a in event_rows) or "—",sum(1 for a in event_rows if a["participant_role"]=="Участник"),sum(1 for a in event_rows if a["participant_role"]=="Волонтер")])
-            title(roster,"Сводная карточка учебной группы",16)
-            table(roster,["№","ISU ID","Номер ЗК","ФИО","Дата рождения","Группа здоровья","ТиМ ФКиС","Дата ТиМ","Практика ФКиС","Посещаемость","Сборная команда","ВФСК «ГТО»","Спортивный разряд","Спортивное достижение","Участник","Волонтер"],roster_rows,[7,14,16,34,16,20,18,14,18,16,25,22,24,32,12,12])
+                roster_rows.append([index,s["isu_id"],s["enrollment_number"],s["name"],s["birth_date"],s["health"],s["theory"],s["theory_date"],s["practice"],s["attendance_pct"]/100,"не указано",", ".join(teams) or "—",", ".join(sections) or "—",", ".join(a["distinction"] or "" for a in gto_rows) or "—",", ".join(a["distinction"] or "" for a in rank_rows) or "—","; ".join(a["event_result"] or a["details"] or "" for a in event_rows) or "—",sum(1 for a in event_rows if a["participant_role"]=="Участник"),sum(1 for a in event_rows if a["participant_role"]=="Волонтер"),sports_organizer or "—"])
+            title(roster,"Сводная карточка учебной группы",19)
+            table(roster,["№","ISU ID","Номер ЗК","ФИО","Дата рождения","Группа здоровья","ТиМ ФКиС","Дата ТиМ","Практика ФКиС","Посещаемость","Общая оценка ФКиС","Сборная команда","Спортивная секция","ВФСК «ГТО»","Спортивное звание (разряд)","Спортивное достижение","Участник","Волонтер","Спортивный организатор группы"],roster_rows,[7,14,16,34,16,20,18,14,18,16,20,25,25,22,26,32,12,12,32])
             fitness_rows=[[next((i for i,student in enumerate(students,1) if student["id"]==test["student_id"]),"—"),test["isu_id"],test["name"],test["exercise"],test["result"],test["record_date"]] for test in tests]
             title(fitness,"Физическая подготовленность",6)
             table(fitness,["№","ISU ID","ФИО","Физическое упражнение","Результат","Дата выполнения"],fitness_rows,[7,14,34,36,25,18])
@@ -526,7 +606,8 @@ class App(SimpleHTTPRequestHandler):
                 "achievements": rows("SELECT category AS label,COUNT(*) AS count FROM achievements a JOIN students s ON s.id=a.student_id WHERE s.group_code=? GROUP BY category ORDER BY category", (group_code,)),
                 "attendance": rows("SELECT COUNT(*) AS lessons,SUM(CASE WHEN present THEN 1 ELSE 0 END) AS present FROM attendance_log WHERE student_id IN (SELECT id FROM students WHERE group_code=?)", (group_code,))[0]
             }
-            self.send_json({"students":students,"achievements":achievements,"physical_tests":physical_tests,"attendance_records":attendance_records,"attendance_trend":attendance_trend,"summary":summary,"group":group_code,"today":date.today().isoformat()}); return
+            group_meta=rows("SELECT sports_organizer FROM academic_groups WHERE group_code=?",(group_code,))
+            self.send_json({"students":students,"achievements":achievements,"physical_tests":physical_tests,"attendance_records":attendance_records,"attendance_trend":attendance_trend,"summary":summary,"group":group_code,"sports_organizer":group_meta[0]["sports_organizer"] if group_meta else None,"today":date.today().isoformat()}); return
         if path.startswith("/api/achievement-document/"):
             if self.role_required("Сотрудник ССК «Армада»","Ответственный исполнитель кафедры ФВ","Преподаватель кафедры ФВ"): return
             achievement_id=int(path.rsplit("/",1)[1]); con=connect(); item=con.execute("SELECT document_name,document_data FROM achievements WHERE id=?",(achievement_id,)).fetchone(); con.close()
@@ -538,6 +619,20 @@ class App(SimpleHTTPRequestHandler):
         if self.auth_required(): return
         path=urlparse(self.path).path; data=self.body(); con=connect()
         try:
+            if path=="/api/student-health":
+                if self.role_required("Ответственный исполнитель кафедры ФВ"): return
+                health=data.get("health")
+                if health not in ("основная","подготовительная","специальная"): raise ValueError("Выберите основную, подготовительную или специальную группу здоровья.")
+                cursor=con.execute("UPDATE students SET health=? WHERE id=?",(health,int(data["student_id"])))
+                if cursor.rowcount!=1: raise ValueError("Студент не найден.")
+                con.commit(); self.send_json({"ok":True}); return
+            if path=="/api/group-organizer":
+                if self.role_required("Преподаватель кафедры ФВ","Сотрудник ССК «Армада»"): return
+                group_code=str(data.get("group_code","")).strip()
+                name=str(data.get("sports_organizer","")).strip()
+                if not group_code or len(name)>160: raise ValueError("Проверьте группу и ФИО организатора (до 160 символов).")
+                if not con.execute("SELECT 1 FROM academic_groups WHERE group_code=?",(group_code,)).fetchone(): raise ValueError("Выберите существующую группу.")
+                con.execute("UPDATE academic_groups SET sports_organizer=? WHERE group_code=?",(name or None,group_code)); con.commit(); self.send_json({"ok":True}); return
             if path.startswith("/api/students/"):
                 if self.role_required("Ответственный исполнитель кафедры ФВ"): return
                 student_id=int(path.rsplit("/",1)[1])

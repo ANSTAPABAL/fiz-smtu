@@ -96,7 +96,7 @@ function showRole() {
     "Преподаватель кафедры ФВ":{input:[["attendance","Посещаемость занятий"],["physical","Физическая подготовленность"]],results:[["students","Карточка студента"],["groupCard","Карточка группы"],["reports","Сводные данные"]],nav:["dashboard","students","attendance","physical","groupCard","reports"]},
     "Сотрудник ССК «Армада»":{input:[["achievements","Спортивный разряд, ГТО, сборная, секция и мероприятия"]],results:[["students","Карточка студента"],["groupCard","Карточка группы"],["reports","Сводные данные"]],nav:["students","achievements","groupCard","reports"]},
     "Студент":{input:[["studentPortal","Подать или обновить данные"]],results:[["studentPortal","Карточка студента и решения по заявкам"]],nav:["studentPortal"]},
-    "Ответственный исполнитель кафедры ФВ":{input:[["approvals","Проверка и подтверждение данных студентов"]],results:[["reports","Сводные данные"]],nav:["approvals","reports"]}
+    "Ответственный исполнитель кафедры ФВ":{input:[["approvals","Проверка и подтверждение данных студентов"],["health","Группа здоровья"]],results:[["reports","Сводные данные"]],nav:["approvals","health","reports"]}
   }[selectedRole];
   document.querySelectorAll('.nav-item').forEach(button=>button.hidden=!access.nav.includes(button.dataset.view));
   $('#groupPicker').hidden=selectedRole==='Студент';
@@ -112,6 +112,7 @@ function render() {
     const graded=activeLessonType==='Зачет с оценкой', credit=activeLessonType==='Зачет';
     return `<tr><td>${index + 1}</td><td><div class="student-cell"><span class="avatar">${escapeHtml(initials(student.name))}</span><b>${escapeHtml(student.name)}</b></div></td><td>${escapeHtml(student.health || 'не указана')}</td>${graded?`<td><select class="attendance-grade" data-grade-student="${student.id}"><option value="">Выберите оценку</option>${['Отлично','Хорошо','Удовлетворительно','Неудовлетворительно'].map(grade=>`<option ${student.grade===grade?'selected':''}>${grade}</option>`).join('')}</select></td>`:`<td><div class="attendance-toggle" data-id="${student.id}"><button class="${student.present ? 'on' : ''}" data-set="true">${credit?'Зачет':'Присутствовал'}</button><button class="${!student.present ? 'off' : ''}" data-set="false">${credit?'Не зачет':'Отсутствовал'}</button></div></td>`}</tr>`;
   }).join('');
+  $('#healthBody').innerHTML=students.map((student,index)=>`<tr><td>${index+1}</td><td><b>${escapeHtml(student.name)}</b></td><td><select data-health-student="${student.id}" aria-label="Группа здоровья: ${escapeHtml(student.name)}"><option value="" ${!['основная','подготовительная','специальная'].includes(String(student.health).toLowerCase())?'selected':''}>Выберите группу здоровья</option>${['основная','подготовительная','специальная'].map(value=>`<option ${String(student.health).toLowerCase()===value?'selected':''}>${value}</option>`).join('')}</select></td><td><button class="detail-button" data-save-health="${student.id}">Сохранить</button></td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">Список группы пуст.</td></tr>';
   $('#achievementBody').innerHTML = achievements.map(item => {
     const key = categoryKey(item.category);
     const sportOrEvent = key === 'rank' ? item.sport_type : key === 'team' ? item.team_name : key === 'section' ? item.sport_type : key === 'event' ? item.details : '';
@@ -129,59 +130,37 @@ function render() {
   $('#filterAttention').textContent = `Внимание · ${students.filter(s => Number(s.attendance) > 0 && Number(s.attendance) < 70).length}`;
   renderPhysical();
   renderStats();
+  renderGroupRoster();
   applyStudentFilter();
+}
+function renderGroupRoster() {
+  $('#groupRosterBody').innerHTML=students.map((student,index)=>{
+    const records=achievements.filter(item=>Number(item.student_id)===Number(student.id));
+    const active=records.filter(item=>!['исключен','не действует'].includes(String(item.status).toLowerCase()));
+    const teams=active.filter(item=>categoryKey(item.category)==='team').map(item=>item.team_name||item.details).filter(Boolean);
+    const gto=active.filter(item=>categoryKey(item.category)==='gto').map(item=>item.distinction).filter(Boolean);
+    const ranks=active.filter(item=>categoryKey(item.category)==='rank').map(item=>item.distinction).filter(Boolean);
+    const events=records.filter(item=>categoryKey(item.category)==='event');
+    const achievement=events.map(item=>[item.details,item.event_result||item.participant_role].filter(Boolean).join(': ')).filter(Boolean);
+    const initialsName=student.name.split(/\s+/).map((part,i)=>i?`${part[0]}.`:part).join(' ');
+    return `<tr><td>${index+1}</td><td><button class="detail-button" data-student="${student.id}">${escapeHtml(initialsName)}</button></td><td>${escapeHtml(student.health||'не указана')}</td><td>${escapeHtml(student.theory||'не указано')}</td><td>${escapeHtml(student.practice||'не указано')}</td><td>не указано</td><td>${escapeHtml(teams.join(', ')||'—')}</td><td>${escapeHtml(gto.join(', ')||'—')}</td><td>${escapeHtml(ranks.join(', ')||'—')}</td><td>${escapeHtml(achievement.join('; ')||'—')}</td><td>${events.filter(item=>item.participant_role==='Участник').length}</td><td>${events.filter(item=>item.participant_role==='Волонтер').length}</td></tr>`;
+  }).join('')||'<tr><td colspan="12" class="empty-state">Список группы пуст.</td></tr>';
 }
 function renderPhysical() {
   const position = new Map(students.map((student, index) => [student.id, index + 1]));
   $('#physicalBody').innerHTML = physicalTests.map(item => `<tr><td>${position.get(item.student_id) || '—'}</td><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.exercise)}</td><td>${escapeHtml(item.result)}</td><td>${escapeHtml(item.grade || 'Нет норматива')}</td><td>${escapeHtml(displayDate(item.record_date))}</td><td><button class="detail-button" data-physical="${item.id}">Изменить</button></td></tr>`).join('') || '<tr><td colspan="7" class="empty-state">Результаты испытаний пока не внесены.</td></tr>';
-}
-function countByLabel(items, label) {
-  return Number((items || []).find(item => String(item.label).toLowerCase() === label)?.count || 0);
 }
 function renderStats() {
   const total = students.length;
   const avg = total ? Math.round(students.reduce((sum, student) => sum + Number(student.attendance || 0), 0) / total) : 0;
   const attendanceHasData = Number(summary.attendance?.lessons || 0) > 0;
   const practice = students.filter(student => student.practice === 'зачет').length;
-  const unknownHealth = students.filter(student => !['основная','подготовительная','специальная'].includes(String(student.health).toLowerCase())).length;
-  const healthCount = label => countByLabel(summary.health, label);
   const pct = value => total ? `${Math.round(value / total * 100)}%` : '—';
   $('#metricStudents').textContent = total;
   $('#metricAttendance').textContent = attendanceHasData ? `${avg}%` : '—';
   $('#metricCredit').textContent = students.some(student => student.practice !== 'не указано') ? `${practice} / ${total}` : '—';
   $('#metricCreditShare').textContent = students.some(student => student.practice !== 'не указано') ? `${pct(practice)} группы` : 'оценки еще не внесены';
   $('#metricAttention').textContent = students.filter(student => Number(student.attendance) > 0 && Number(student.attendance) < 70).length;
-  $('#reportMain').textContent = healthCount('основная');
-  $('#reportMainShare').textContent = `${pct(healthCount('основная'))} студентов`;
-  $('#reportPrep').textContent = healthCount('подготовительная');
-  $('#reportPrepShare').textContent = `${pct(healthCount('подготовительная'))} студентов`;
-  $('#reportSpecial').textContent = healthCount('специальная');
-  $('#reportSpecialShare').textContent = `${pct(healthCount('специальная'))} студентов`;
-  $('#reportEvents').textContent = new Set(achievements.filter(item => categoryKey(item.category) === 'event').map(item => item.student_id)).size;
-  $('#cardHealthMain').textContent = healthCount('основная');
-  $('#cardHealthPrep').textContent = healthCount('подготовительная');
-  $('#cardHealthSpecial').textContent = healthCount('специальная');
-  $('#cardHealthUnknown').textContent = unknownHealth;
-  const credited = students.filter(s => s.theory === 'зачет' && s.practice === 'зачет').length;
-  const events = achievements.filter(a => categoryKey(a.category) === 'event');
-  const gto = achievements.filter(a => categoryKey(a.category) === 'gto');
-  const ranks = achievements.filter(a => categoryKey(a.category) === 'rank');
-  const teams = achievements.filter(a => categoryKey(a.category) === 'team' && a.status !== 'Исключен');
-  const sections = achievements.filter(a => categoryKey(a.category) === 'section' && a.status !== 'Исключен');
-  $('#groupCardBody').innerHTML = [
-    ['Состав группы','Всего студентов',total],
-    ['Здоровье','Не указана',unknownHealth],
-    ['Посещаемость','Сохранено отметок',Number(summary.attendance?.lessons || 0)],
-    ['Посещаемость','Общая доля присутствия',attendanceHasData ? `${Math.round(Number(summary.attendance.present || 0) / Number(summary.attendance.lessons) * 100)}%` : 'нет отметок'],
-    ['ТиМ ФКиС','Зачет / не зачет / не указано',`${students.filter(s=>s.theory==='зачет').length} / ${students.filter(s=>s.theory==='не зачет').length} / ${students.filter(s=>!['зачет','не зачет'].includes(s.theory)).length}`],
-    ['Практика ФКиС','Зачет / не зачет / не указано',`${students.filter(s=>s.practice==='зачет').length} / ${students.filter(s=>s.practice==='не зачет').length} / ${students.filter(s=>!['зачет','не зачет'].includes(s.practice)).length}`],
-    ['Общая оценка','Зачет по обоим показателям',credited],
-    ['Сборная команда / секция','Действующие записи',teams.length],
-    ['Спортивная секция','Действующие записи',sections.length],
-    ['ВФСК «ГТО»','Учтено достижений',gto.length],
-    ['Спортивное звание / разряд','Учтено достижений',ranks.length],
-    ['Спортивные мероприятия','Записей участника или волонтера',events.length]
-  ].map(row=>`<tr><td>${escapeHtml(row[0])}</td><td>${escapeHtml(row[1])}</td><td>${escapeHtml(row[2])}</td></tr>`).join('');
   const bars = (window.attendanceTrend || []).slice(0, 7).reverse();
   $('#attendanceBars').innerHTML = bars.length ? bars.map(row => {
     const percent = row.total ? Math.round(row.present / row.total * 100) : 0;
@@ -189,8 +168,8 @@ function renderStats() {
   }).join('') : '<p class="empty-state">График появится после сохранения отметок посещаемости.</p>';
 }
 async function renderConsolidated() {
-  const {courses}=await api('/api/consolidated');
-  $('#consolidatedBody').innerHTML=courses.map(row=>`<tr>${[`${row.course} курс`,row.total,row.main_health,row.prep_health,row.special_health,row.theory_credit,row.theory_no_credit,row.practice_credit,row.practice_no_credit,row.teams,row.sections,row.gto,row.ranks,row.participants,row.volunteers].map(value=>`<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('')||'<tr><td colspan="15" class="empty-state">Данных пока нет.</td></tr>';
+  const {rows}=await api('/api/consolidated');
+  $('#consolidatedBody').innerHTML=rows.map(row=>`<tr class="summary-${escapeHtml(row.level)}">${[row.label,row.total,row.main_health,row.prep_health,row.special_health,row.theory_credit,row.theory_no_credit,row.practice_credit,row.practice_no_credit,row.overall_grade||'—',row.teams,row.sections,row.gto_gold,row.gto_silver,row.gto_bronze,row.gto_none,row.ms,row.kms,row.rank1,row.rank2,row.rank3,row.rank_none,row.sport_achievements,row.participants,row.volunteers].map(value=>`<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('')||'<tr><td colspan="25" class="empty-state">Данных пока нет.</td></tr>';
 }
 function applyStudentFilter() {
   document.querySelectorAll('#studentsBody tr').forEach((row,index) => {
@@ -211,6 +190,7 @@ async function load() {
   achievements = data.achievements || [];
   physicalTests = data.physical_tests || [];
   summary = data.summary || {};
+  $('#groupOrganizerName').value=data.sports_organizer||'';
   window.attendanceTrend = data.attendance_trend || [];
   updateGroupLabels();
   render();
@@ -233,7 +213,14 @@ async function loadStudentPortal() {
   if(profile.birth_date)$('#submissionAgeGroup').value=gtoStageFromBirth(profile.birth_date,$('#submissionDate').value||todayLocal());
   if(!$('#submissionDate').value)$('#submissionDate').value=todayLocal();
   $('#studentPortalStatus').textContent=data.registered?`Подтвержденный профиль · ${escapeHtml(data.student.display_code||data.student.group_code)}`:data.submission?.status==='Отклонено'?`Заявка отклонена: ${escapeHtml(data.submission.review_note||'исправьте сведения и отправьте повторно')}`:'Профиль ожидает проверки ответственным исполнителем.';
-  $('#studentCardData').innerHTML=data.registered?`<div class="detail-grid"><div><span>ФИО</span><b>${escapeHtml(data.student.name)}</b></div><div><span>Дата рождения</span><b>${escapeHtml(displayDate(data.student.birth_date))}</b></div><div><span>Учебная группа</span><b>${escapeHtml(data.student.display_code||data.student.group_code)}</b></div><div><span>Группа здоровья</span><b>${escapeHtml(data.student.health||'не указана')}</b></div><div><span>ТиМ ФКиС</span><b>${escapeHtml(data.student.theory||'не указано')}</b></div><div><span>Практика ФКиС</span><b>${escapeHtml(data.student.practice||'не указано')}</b></div><div><span>Физическая подготовленность</span><b>${data.physical_tests.map(item=>`${escapeHtml(item.exercise)}: ${escapeHtml(item.result)}`).join('<br>')||'результатов пока нет'}</b></div><div><span>Спортивные достижения</span><b>${data.achievements.map(item=>escapeHtml(item.category)).join('<br>')||'нет подтвержденных записей'}</b></div></div>`:'<p class="empty-state">Карточка появится после подтверждения заявки.</p>';
+  const events=data.achievements.filter(item=>categoryKey(item.category)==='event');
+  const ranks=data.achievements.filter(item=>categoryKey(item.category)==='rank');
+  const gto=data.achievements.filter(item=>categoryKey(item.category)==='gto');
+  const teams=data.achievements.filter(item=>categoryKey(item.category)==='team'&&item.status!=='Исключен');
+  const sections=data.achievements.filter(item=>categoryKey(item.category)==='section'&&item.status!=='Исключен');
+  const achievementDetails=data.achievements.map(item=>`<li>${escapeHtml(item.category)}: ${escapeHtml(item.details||item.distinction||item.team_name||item.sport_type||'запись')} · ${escapeHtml(item.status||'')}</li>`).join('');
+  const eventDetails=events.map(item=>`<li>${escapeHtml(item.details||'Мероприятие')} · ${escapeHtml(item.participant_role||'роль не указана')} · ${escapeHtml(item.event_result||'результат не указан')} · ${escapeHtml(displayDate(item.record_date))}</li>`).join('');
+  $('#studentCardData').innerHTML=data.registered?`<div class="detail-grid"><div><span>ФИО</span><b>${escapeHtml(data.student.name)}</b></div><div><span>Дата рождения</span><b>${escapeHtml(displayDate(data.student.birth_date))}</b></div><div><span>Учебная группа</span><b>${escapeHtml(data.student.display_code||data.student.group_code)}</b></div><div><span>Группа здоровья</span><b>${escapeHtml(data.student.health||'не указана')}</b></div><div><span>ВФСК «ГТО»</span><b>${escapeHtml(gto.map(item=>item.distinction).filter(Boolean).join(', ')||'отсутствует')}</b></div><div><span>Спортивное звание (разряд)</span><b>${escapeHtml(ranks.map(item=>item.distinction).filter(Boolean).join(', ')||'отсутствует')}</b></div><div><span>Теория и методика ФКиС</span><b>${escapeHtml(data.student.theory||'не указано')} · дата: ${escapeHtml(displayDate(data.student.theory_date)||'не указана')}</b></div><div><span>Посещаемость ФКиС</span><b>${Number(data.attendance?.present||0)} из ${Number(data.attendance?.total||0)} отметок · ${Number(data.attendance?.total||0)?Math.round(Number(data.attendance.present||0)/Number(data.attendance.total)*100)+'%':'нет отметок'}</b></div><div><span>Зачет и дополнительные баллы за посещаемость</span><b>Не рассчитываются: нет утвержденного критерия и правил начисления</b></div><div><span>Практика ФКиС</span><b>${escapeHtml(data.student.practice||'не указано')}</b></div><div><span>Физическая подготовленность</span><b>${data.physical_tests.map(item=>`${escapeHtml(item.exercise)}: ${escapeHtml(item.result)} (${escapeHtml(item.grade||'норматив не загружен')})`).join('<br>')||'результатов пока нет'}</b></div><div><span>Сборная команда</span><b>${teams.length} · ${escapeHtml(teams.map(item=>item.team_name||'участник').join(', ')||'отсутствует')}</b></div><div><span>Спортивная секция</span><b>${sections.length} · ${escapeHtml(sections.map(item=>item.sport_type||'участник').join(', ')||'отсутствует')}</b></div><div><span>Участие спортсменом / волонтером</span><b>${events.filter(item=>item.participant_role==='Участник').length} / ${events.filter(item=>item.participant_role==='Волонтер').length}<details><summary>Список мероприятий</summary><ul>${eventDetails||'<li>Записей нет.</li>'}</ul></details></b></div><div class="full-detail"><span>Спортивные достижения</span><ul>${achievementDetails||'<li>Нет подтвержденных записей</li>'}</ul></div></div>`:'<p class="empty-state">Карточка появится после подтверждения заявки.</p>';
   $('#mySubmissionList').innerHTML=mine.submissions.map(item=>`<div class="approval-card"><b>${escapeHtml(item.status)}</b><span>${escapeHtml(displayDate(item.created_at))}</span>${item.review_note?`<p>${escapeHtml(item.review_note)}</p>`:''}</div>`).join('')||'<p class="empty-state">Отправленных заявок пока нет.</p>';
 }
 async function loadApprovals() {
@@ -282,7 +269,7 @@ function resetAttendanceFlow() {
 }
 function go(view) {
   if(appSession&&view!=='roleHome'){
-    const permitted={"Преподаватель кафедры ФВ":["dashboard","students","attendance","physical","groupCard","reports"],"Сотрудник ССК «Армада»":["students","achievements","groupCard","reports"],"Студент":["studentPortal"],"Ответственный исполнитель кафедры ФВ":["approvals","reports"]};
+    const permitted={"Преподаватель кафедры ФВ":["dashboard","students","attendance","physical","groupCard","reports"],"Сотрудник ССК «Армада»":["students","achievements","groupCard","reports"],"Студент":["studentPortal"],"Ответственный исполнитель кафедры ФВ":["approvals","health","reports"]};
     if(!permitted[selectedRole]?.includes(view))return;
   }
   document.querySelectorAll('.view').forEach(section => section.classList.toggle('active-view', section.id === view));
@@ -300,6 +287,12 @@ function studentCard(id) {
   selectedStudentId = student.id;
   const records = achievements.filter(item => item.student_id === student.id);
   const physical = physicalTests.filter(item => item.student_id === student.id);
+  const events=records.filter(item=>categoryKey(item.category)==='event');
+  const rank=records.filter(item=>categoryKey(item.category)==='rank');
+  const gto=records.filter(item=>categoryKey(item.category)==='gto');
+  const teams=records.filter(item=>categoryKey(item.category)==='team'&&item.status!=='Исключен');
+  const sections=records.filter(item=>categoryKey(item.category)==='section'&&item.status!=='Исключен');
+  const eventList=role=>{const matches=events.filter(item=>item.participant_role===role);return `<details><summary>${matches.length} ${role==='Участник'?'участий спортсменом':'волонтерств'}</summary>${matches.length?matches.map(item=>`<p>${escapeHtml(item.details||'Мероприятие')} · ${escapeHtml(item.event_result||'результат не указан')} · ${escapeHtml(displayDate(item.record_date))}</p>`).join(''):'<p>Записей нет.</p>'}</details>`;};
   $('#modalStudentName').textContent = student.name;
   $('#studentDetails').innerHTML = `<div class="detail-grid">
     <div><span>Учебная группа (ИСУ)</span><b>${escapeHtml(window.groupDisplayName?.(activeGroup) || activeGroup)}</b></div>
@@ -308,10 +301,16 @@ function studentCard(id) {
     <div><span>Дата рождения</span><b>${escapeHtml(displayDate(student.birth_date) === '—' ? '' : displayDate(student.birth_date)) || 'не получена из выгрузки'}</b></div>
     <div><span>Группа здоровья</span><b>${escapeHtml(student.health || 'не указана')}</b></div>
     <div><span>ТиМ ФКиС</span><b>${escapeHtml(student.theory || 'не указано')}${student.theory_date ? ` · ${escapeHtml(displayDate(student.theory_date))}` : ''}</b></div>
-    <div><span>Посещаемость</span><b>${Number(student.attendance)>0 ? `${student.attendance}%` : 'пока нет отметок'}</b></div>
+    <div><span>Посещаемость</span><b>${Number(student.attendance_records_count||0)} отметок · ${Number(student.attendance)>0 ? `${student.attendance}%` : 'процент пока не рассчитан'}</b></div>
     <div><span>Практика ФКиС</span><b>${escapeHtml(student.practice || 'не указано')}</b></div>
-    <div><span>Физическая подготовленность</span><b>${physical.length ? physical.map(item=>`${escapeHtml(item.exercise)}: ${escapeHtml(item.result)}`).join('<br>') : 'результатов пока нет'}</b></div>
-    <div><span>Спортивные достижения</span><b>${records.length ? records.map(item=>escapeHtml(item.category)).join('<br>') : 'нет записей'}</b></div>
+    <div><span>ВФСК «ГТО»</span><b>${escapeHtml(gto.map(item=>item.distinction||item.category).join(', ')||'отсутствует')}</b></div>
+    <div><span>Спортивное звание (разряд)</span><b>${escapeHtml(rank.map(item=>item.distinction).filter(Boolean).join(', ')||'отсутствует')}</b></div>
+    <div><span>Сборная команда</span><b>${teams.length} · ${escapeHtml(teams.map(item=>item.team_name||'участник').join(', ')||'отсутствует')}</b></div>
+    <div><span>Спортивная секция</span><b>${sections.length} · ${escapeHtml(sections.map(item=>item.sport_type||'участник').join(', ')||'отсутствует')}</b></div>
+    <div><span>Физическая подготовленность</span><b>${physical.length ? physical.map(item=>`${escapeHtml(item.exercise)}: ${escapeHtml(item.result)} (${escapeHtml(item.grade||'оценка по нормативу не загружена')})`).join('<br>') : 'результатов пока нет'}</b></div>
+    <div><span>Зачет и дополнительные баллы за посещаемость</span><b>Не рассчитываются: нет утвержденного критерия и правил начисления</b></div>
+    <div><span>Спортивные мероприятия</span><b>${eventList('Участник')}${eventList('Волонтер')}</b></div>
+    <div><span>Спортивные достижения</span><b>${records.length ? records.map(item=>`${escapeHtml(item.category)}: ${escapeHtml(item.details||item.distinction||item.team_name||item.sport_type||'запись')}`).join('<br>') : 'нет подтвержденных записей'}</b></div>
   </div>`;
   $('#studentModal').hidden = false;
 }
@@ -422,8 +421,8 @@ const tourByRole = {
     {view:'attendance',target:'#attendanceSetup',title:'Журнал посещаемости',text:'Выберите дисциплину, подтвердите, затем выберите тип занятия и отметьте студентов. Для зачета доступны «Зачет/Не зачет», для зачета с оценкой — оценочная шкала.'},
     {view:'physical',target:'.physical-setup',title:'Физическая подготовленность',text:'Выберите студента, упражнение, дату и внесите результат. Оценка появится после загрузки нормативной таблицы.'}
   ],
-  "Сотрудник ССК «Армада»":[{view:'achievements',target:'.achievement-tabs',title:'Спортивные достижения',text:'Ведите разряды, ГТО, сборные команды, спортивные секции и мероприятия. Поля меняются в зависимости от раздела.'},{view:'groupCard',target:'#groupCardBody',title:'Карточка группы',text:'Здесь отображаются состав, здоровье и состояние учета.'}],
-  "Ответственный исполнитель кафедры ФВ":[{view:'approvals',target:'#approvalList',title:'Проверка заявок',text:'Подтвердите данные студента или верните их на исправление с причиной. Студент увидит решение в личном кабинете; письмо отправится при настроенном SMTP.'},{view:'reports',target:'#consolidatedBody',title:'Сводные данные',text:'Отчет сгруппирован по курсам и содержит только числовые показатели, без ФИО.'}],
+  "Сотрудник ССК «Армада»":[{view:'achievements',target:'.achievement-tabs',title:'Спортивные достижения',text:'Ведите разряды, ГТО, сборные команды, спортивные секции и мероприятия. Поля меняются в зависимости от раздела.'},{view:'groupCard',target:'#groupRosterBody',title:'Карточка группы',text:'Ведомость показывает состав группы и подтвержденные показатели учета.'}],
+  "Ответственный исполнитель кафедры ФВ":[{view:'approvals',target:'#approvalList',title:'Проверка заявок',text:'Подтвердите данные студента или верните их на исправление с причиной. Студент увидит решение в личном кабинете; письмо отправится при настроенном SMTP.'},{view:'health',target:'#healthBody',title:'Группа здоровья',text:'Выберите категорию здоровья для студента и сохраните изменение.'},{view:'reports',target:'#consolidatedBody',title:'Сводные данные',text:'Отчет сгруппирован по курсам и содержит только числовые показатели, без ФИО.'}],
   "Студент":[{view:'studentPortal',target:'#studentSubmissionPanel',title:'Ввод данных студентом',text:'Отправьте сведения о себе или достижении ответственному исполнителю на проверку.'},{view:'studentPortal',target:'#mySubmissionList',title:'Результаты и решения',text:'В карточке отображаются подтвержденные данные и причины возврата заявок на исправление.'}]
 };
 const defaultTour = [
@@ -432,7 +431,7 @@ const defaultTour = [
   {view:'attendance',target:'#attendanceSetup',title:'Посещаемость',text:'Сначала выберите дисциплину и подтвердите выбор. Затем установите дату, отметьте каждого студента и сохраните журнал.'},
   {view:'physical',target:'.physical-setup',title:'Физическая подготовленность',text:'Выберите студента, дату и испытание. Запишите результат. Повторная запись того же упражнения за эту дату обновится.'},
   {view:'achievements',target:'.achievement-tabs',title:'Спортивные достижения',text:'Ведите спортивные разряды, ГТО, членство в сборной или секции и участие в мероприятиях. К записи можно приложить подтверждающий PDF.'},
-  {view:'groupCard',target:'#groupCardBody',title:'Карточка группы',text:'Здесь собраны состав, здоровье, учебные зачеты, посещаемость и количество спортивных записей.'},
+  {view:'groupCard',target:'#groupRosterBody',title:'Карточка группы',text:'Ведомость показывает состав группы и подтвержденные показатели учета.'},
   {view:'reports',target:'#consolidatedBody',title:'Сводные данные',text:'Отчет сгруппирован по курсам и содержит только числовые показатели, без ФИО студентов.'}
 ];
 let step = 0;
@@ -449,9 +448,11 @@ document.addEventListener('click', async event => {
   const roleChoice = event.target.closest('[data-role]');
   const reviewButton = event.target.closest('[data-review]');
   const homeModeButton = event.target.closest('[data-home-mode]');
+  const healthSave = event.target.closest('[data-save-health]');
   if (nav) go(nav.dataset.view);
   if (goButton) go(goButton.dataset.go);
   if (studentButton) studentCard(studentButton.dataset.student);
+  if(healthSave){const studentId=Number(healthSave.dataset.saveHealth),health=$(`[data-health-student="${studentId}"]`).value;if(!health)return toast('Выберите группу здоровья.');try{await api('/api/student-health','PUT',{student_id:studentId,health});await load();toast('Группа здоровья сохранена.')}catch(error){toast(error.message)}}
   if (achievementButton) editAchievement(achievementButton.dataset.achievement);
   if (physicalButton) {
     const item=physicalTests.find(record=>record.id===Number(physicalButton.dataset.physical));
@@ -487,7 +488,7 @@ $('#confirmDiscipline').onclick=async()=>{
   if(!discipline)return toast('Сначала выберите дисциплину.');
   activeDiscipline=discipline;
   const types=discipline==='Элективная физическая культура и спорт'?['Общая физическая подготовка','Плавание','Единоборства','Фитнес (акробатика и т.п.)','Зачет']:['Лекция 1','Лекция 2','Лекция 3','Лекция 4','Лекция 5','Практическое занятие','Зачет','Зачет с оценкой'];
-  $('#lessonActivityLabel').textContent=discipline==='Элективная физическая культура и спорт'?'Тема занятия':'Занятие';
+  $('#lessonActivityLabel').textContent=discipline==='Элективная физическая культура и спорт'?'Практическое занятие':'Занятие';
   $('#lessonTopic').innerHTML='<option value="">Выберите '+(discipline==='Элективная физическая культура и спорт'?'тему':'занятие')+'</option>'+types.map(value=>`<option>${escapeHtml(value)}</option>`).join('');
   $('#activeDisciplineLabel').textContent=discipline;
   $('#attendanceSubtitle').innerHTML=`Группа <span data-group-label>${escapeHtml(window.groupDisplayName?.(activeGroup) || activeGroup)}</span> · ${escapeHtml(discipline)}`;
@@ -580,7 +581,9 @@ $('#saveStudent').onclick=async()=>{
   try { await api('/api/students','POST',{name,health:$('#newStudentHealth').value,group_code:activeGroup}); $('#addStudentModal').hidden=true; $('#newStudentName').value=''; await load(); toast('Студент добавлен.'); }
   catch(error) { toast(error.message); }
 };
-$('#exportReport').onclick=()=>{window.location.href=`/api/export.xlsx?group=${encodeURIComponent(activeGroup)}`;toast('Сводная ведомость подготовлена.')};
+$('#exportReport').onclick=()=>{window.location.href='/api/consolidated.xlsx';toast('Сводная ведомость подготовлена.')};
+$('#exportGroupRoster').onclick=()=>{window.location.href=`/api/export.xlsx?group=${encodeURIComponent(activeGroup)}`;toast('Ведомость группы подготовлена.')};
+$('#saveGroupOrganizer').onclick=async()=>{try{await api('/api/group-organizer','PUT',{group_code:activeGroup,sports_organizer:$('#groupOrganizerName').value.trim()});toast('Спортивный организатор группы сохранен.')}catch(error){toast(error.message)}};
   $('#guideStart').onclick=()=>{tour=tourByRole[selectedRole]||defaultTour;step=0;updateTour();};
 $('#tourNext').onclick=()=>{step===tour.length-1?closeGuide():(step++,updateTour());};
 $('#tourSkip').onclick=$('#closeTour').onclick=closeGuide;
