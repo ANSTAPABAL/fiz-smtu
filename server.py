@@ -6,6 +6,10 @@ import hmac
 import hashlib
 import time
 import re
+import smtplib
+from email.message import EmailMessage
+from contextvars import ContextVar
+from functools import wraps
 from datetime import date
 from io import BytesIO
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -31,10 +35,21 @@ if DATABASE_URL and psycopg is None:
     raise RuntimeError("Установите зависимости из requirements.txt для подключения к PostgreSQL.")
 
 DB_ERRORS = (sqlite3.Error,) + ((psycopg.Error,) if psycopg else ())
+_REQUEST_CONNECTION = ContextVar("request_connection", default=None)
 APP_USERNAME = os.environ.get("APP_USERNAME", "fizruk")
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "local-development-only")
 AUTH_ENABLED = bool(APP_PASSWORD)
+ROLE_ACCOUNTS = {
+    "Преподаватель кафедры ФВ": (APP_USERNAME, APP_PASSWORD),
+    "Сотрудник ССК «Армада»": (os.environ.get("ARMADA_USERNAME", ""), os.environ.get("ARMADA_PASSWORD", "")),
+    "Ответственный исполнитель кафедры ФВ": (os.environ.get("EXECUTOR_USERNAME", ""), os.environ.get("EXECUTOR_PASSWORD", "")),
+}
+ROLES = ("Преподаватель кафедры ФВ", "Сотрудник ССК «Армада»", "Студент", "Ответственный исполнитель кафедры ФВ")
+FITNESS_DISCIPLINES = ("Физическая культура и спорт", "Элективная физическая культура и спорт")
+FITNESS_ACTIVITIES = ("Общая физическая подготовка", "Плавание", "Единоборства", "Фитнес (акробатика и т.п.)", "Зачет")
+LESSON_TYPES = ("Лекция 1", "Лекция 2", "Лекция 3", "Лекция 4", "Лекция 5", "Практическое занятие", "Зачет", "Зачет с оценкой")
+ACHIEVEMENT_CATEGORIES = ["Спортивное звание (разряд)", "ВФСК «ГТО»", "Сборная команда", "Спортивная секция", "Спортивное мероприятие"]
 if APP_ENV == "production" and (not DATABASE_URL or not APP_PASSWORD or not os.environ.get("SESSION_SECRET")):
     raise RuntimeError("Для production задайте DATABASE_URL, APP_PASSWORD и SESSION_SECRET.")
 
@@ -69,14 +84,95 @@ class PostgresConnection:
     def close(self): self.connection.close()
 
 DEFAULT_GROUP = "0905"
-ACHIEVEMENT_CATEGORIES = ["Спортивное звание (разряд)", "ВФСК «ГТО»", "Сборная команда (секция)", "Спортивное мероприятие"]
 
-def connect():
+POSTGRES_BOOTSTRAP_QUERY = """
+WITH params AS (SELECT ?::text AS group_code, ?::date AS lesson_date, ?::text AS discipline, ?::text AS lesson_type),
+selected_students AS (
+  SELECT s.id,s.name,s.health,s.attendance,s.theory,s.practice,s.group_code,s.isu_id,
+    s.enrollment_number,s.study_form,s.list_position,s.birth_date,s.theory_date,
+    CASE WHEN COUNT(a.id)>0
+    THEN ROUND(100.0*SUM(CASE WHEN a.present THEN 1 ELSE 0 END)/COUNT(a.id))
+    ELSE s.attendance END AS computed_attendance,
+    COUNT(a.id) AS attendance_records_count
+  FROM students s CROSS JOIN params p
+  LEFT JOIN attendance_log a ON a.student_id=s.id
+  WHERE s.group_code=p.group_code
+  GROUP BY s.id
+),
+health_summary AS (
+  SELECT s.health AS label,COUNT(*) AS count FROM students s CROSS JOIN params p
+  WHERE s.group_code=p.group_code GROUP BY s.health
+),
+theory_summary AS (
+  SELECT s.theory AS label,COUNT(*) AS count FROM students s CROSS JOIN params p
+  WHERE s.group_code=p.group_code GROUP BY s.theory
+),
+practice_summary AS (
+  SELECT s.practice AS label,COUNT(*) AS count FROM students s CROSS JOIN params p
+  WHERE s.group_code=p.group_code GROUP BY s.practice
+),
+achievement_summary AS (
+  SELECT a.category AS label,COUNT(*) AS count
+  FROM achievements a JOIN students s ON s.id=a.student_id CROSS JOIN params p
+  WHERE s.group_code=p.group_code GROUP BY a.category
+)
+SELECT json_build_object(
+  'students', COALESCE((SELECT json_agg(to_jsonb(s) ORDER BY COALESCE(s.list_position,2147483647),s.name) FROM selected_students s),'[]'::json),
+  'achievements', COALESCE((SELECT json_agg(json_build_object(
+    'id',a.id,'student_id',a.student_id,'name',s.name,'category',a.category,
+    'details',a.details,'record_date',a.record_date,'status',a.status,
+    'sport_type',a.sport_type,'distinction',a.distinction,'age_group',a.age_group,
+    'order_basis',a.order_basis,'participant_role',a.participant_role,
+    'event_result',a.event_result,'note',a.note,'document_name',a.document_name,'team_name',a.team_name
+  ) ORDER BY a.id DESC) FROM achievements a JOIN students s ON s.id=a.student_id CROSS JOIN params p WHERE s.group_code=p.group_code),'[]'::json),
+  'physical_tests', COALESCE((SELECT json_agg(json_build_object(
+    'id',t.id,'student_id',t.student_id,'record_date',t.record_date,
+    'exercise',t.exercise,'result',t.result,'grade',t.grade,'name',s.name
+  ) ORDER BY t.record_date DESC,t.id DESC) FROM physical_tests t JOIN students s ON s.id=t.student_id CROSS JOIN params p WHERE s.group_code=p.group_code),'[]'::json),
+  'attendance_records', COALESCE((SELECT json_agg(json_build_object(
+    'student_id',a.student_id,'present',a.present,'topic',a.topic,'discipline',a.discipline,'lesson_type',a.lesson_type,'grade',a.grade
+  )) FROM attendance_log a CROSS JOIN params p WHERE a.lesson_date=p.lesson_date AND a.discipline=p.discipline AND a.lesson_type=p.lesson_type AND a.student_id IN (SELECT id FROM students WHERE group_code=p.group_code)),'[]'::json),
+  'attendance_trend', COALESCE((SELECT json_agg(json_build_object(
+    'lesson_date',t.lesson_date,'total',t.total,'present',t.present
+  ) ORDER BY t.lesson_date DESC) FROM (
+    SELECT a.lesson_date,COUNT(*) AS total,SUM(CASE WHEN a.present THEN 1 ELSE 0 END) AS present
+    FROM attendance_log a WHERE a.student_id IN (SELECT s.id FROM students s CROSS JOIN params p WHERE s.group_code=p.group_code)
+    GROUP BY a.lesson_date ORDER BY a.lesson_date DESC LIMIT 7
+  ) t),'[]'::json),
+  'summary', json_build_object(
+    'health', COALESCE((SELECT json_agg(json_build_object('label',label,'count',count) ORDER BY label) FROM health_summary),'[]'::json),
+    'theory', COALESCE((SELECT json_agg(json_build_object('label',label,'count',count) ORDER BY label) FROM theory_summary),'[]'::json),
+    'practice', COALESCE((SELECT json_agg(json_build_object('label',label,'count',count) ORDER BY label) FROM practice_summary),'[]'::json),
+    'achievements', COALESCE((SELECT json_agg(json_build_object('label',label,'count',count) ORDER BY label) FROM achievement_summary),'[]'::json),
+    'attendance', (SELECT json_build_object('lessons',COUNT(*),'present',COALESCE(SUM(CASE WHEN a.present THEN 1 ELSE 0 END),0)) FROM attendance_log a WHERE a.student_id IN (SELECT s.id FROM students s CROSS JOIN params p WHERE s.group_code=p.group_code))
+  )
+) AS data
+"""
+
+def _new_connection():
     if DATABASE_URL:
         return PostgresConnection(psycopg.connect(DATABASE_URL, row_factory=postgres_row_factory, connect_timeout=10))
     con = sqlite3.connect(DB)
     con.row_factory = sqlite3.Row
     return con
+
+def connect():
+    return _REQUEST_CONNECTION.get() or _new_connection()
+
+def share_read_connection(handler):
+    @wraps(handler)
+    def wrapped(self, *args, **kwargs):
+        path = urlparse(self.path).path
+        if not DATABASE_URL or path not in ("/api/groups", "/api/bootstrap", "/api/export.xlsx"):
+            return handler(self, *args, **kwargs)
+        connection = _new_connection()
+        token = _REQUEST_CONNECTION.set(connection)
+        try:
+            return handler(self, *args, **kwargs)
+        finally:
+            _REQUEST_CONNECTION.reset(token)
+            connection.close()
+    return wrapped
 
 def init_db():
     if DATABASE_URL:
@@ -86,13 +182,29 @@ def init_db():
             missing = [name for name in required if not con.execute("SELECT to_regclass(?) AS table_name", (f"public.{name}",)).fetchone()["table_name"]]
             if missing:
                 raise RuntimeError("В удалённой базе отсутствуют таблицы: " + ", ".join(missing) + ". Выполните SQL из supabase/schema.sql.")
+            con.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS email text")
+            con.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS faculty text")
+            con.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS course integer")
+            con.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS sport_before text")
+            con.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS elective text")
+            con.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS personal_data_consent boolean NOT NULL DEFAULT false")
+            con.execute("ALTER TABLE attendance_log ADD COLUMN IF NOT EXISTS discipline text NOT NULL DEFAULT 'Физическая культура и спорт'")
+            con.execute("ALTER TABLE attendance_log ADD COLUMN IF NOT EXISTS lesson_type text NOT NULL DEFAULT 'Практическое занятие'")
+            con.execute("ALTER TABLE attendance_log ADD COLUMN IF NOT EXISTS grade text")
+            con.execute("ALTER TABLE physical_tests ADD COLUMN IF NOT EXISTS grade text")
+            con.execute("ALTER TABLE attendance_log DROP CONSTRAINT IF EXISTS attendance_student_lesson_unique")
+            con.execute("CREATE UNIQUE INDEX IF NOT EXISTS attendance_student_lesson_unique ON attendance_log(student_id,lesson_date,discipline,lesson_type)")
+            con.execute("CREATE TABLE IF NOT EXISTS student_accounts(email text PRIMARY KEY,password_salt text NOT NULL,password_hash text NOT NULL,student_id bigint REFERENCES students(id),created_at timestamptz NOT NULL DEFAULT now())")
+            con.execute("CREATE TABLE IF NOT EXISTS student_submissions(id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,email text NOT NULL REFERENCES student_accounts(email),payload text NOT NULL,status text NOT NULL DEFAULT 'На проверке',review_note text,created_at timestamptz NOT NULL DEFAULT now(),reviewed_at timestamptz)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_student_submissions_status ON student_submissions(status,created_at)")
+            con.commit()
         finally:
             con.close()
         return
     con = connect()
     con.executescript("""
       CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY, name TEXT NOT NULL, health TEXT NOT NULL, attendance INTEGER NOT NULL DEFAULT 0, theory TEXT NOT NULL DEFAULT 'не указано', practice TEXT NOT NULL DEFAULT 'не указано', group_code TEXT NOT NULL DEFAULT '0905');
-      CREATE TABLE IF NOT EXISTS attendance_log (id INTEGER PRIMARY KEY, student_id INTEGER NOT NULL REFERENCES students(id), lesson_date TEXT NOT NULL, topic TEXT NOT NULL, present INTEGER NOT NULL, UNIQUE(student_id, lesson_date));
+      CREATE TABLE IF NOT EXISTS attendance_log (id INTEGER PRIMARY KEY, student_id INTEGER NOT NULL REFERENCES students(id), lesson_date TEXT NOT NULL, topic TEXT NOT NULL, discipline TEXT NOT NULL DEFAULT 'Физическая культура и спорт', lesson_type TEXT NOT NULL DEFAULT 'Практическое занятие', grade TEXT, present INTEGER NOT NULL, UNIQUE(student_id, lesson_date, discipline, lesson_type));
       CREATE TABLE IF NOT EXISTS achievements (id INTEGER PRIMARY KEY, student_id INTEGER NOT NULL REFERENCES students(id), category TEXT NOT NULL, details TEXT NOT NULL, record_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Подтверждено');
       CREATE TABLE IF NOT EXISTS physical_tests (id INTEGER PRIMARY KEY, student_id INTEGER NOT NULL REFERENCES students(id), record_date TEXT NOT NULL, exercise TEXT NOT NULL, result TEXT NOT NULL, UNIQUE(student_id,record_date,exercise));
       CREATE TABLE IF NOT EXISTS academic_groups (group_code TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT 'local');
@@ -110,7 +222,9 @@ def init_db():
         con.execute("ALTER TABLE students ADD COLUMN group_code TEXT NOT NULL DEFAULT '12509-05'")
     for name, declaration in {
         "isu_id": "TEXT", "enrollment_number": "TEXT", "study_form": "TEXT",
-        "list_position": "INTEGER", "birth_date": "TEXT", "theory_date": "TEXT"
+        "list_position": "INTEGER", "birth_date": "TEXT", "theory_date": "TEXT",
+        "email": "TEXT", "faculty": "TEXT", "course": "INTEGER", "sport_before": "TEXT",
+        "elective": "TEXT", "personal_data_consent": "INTEGER NOT NULL DEFAULT 0"
     }.items():
         if name not in columns:
             con.execute(f"ALTER TABLE students ADD COLUMN {name} {declaration}")
@@ -123,12 +237,40 @@ def init_db():
     }.items():
         if name not in achievement_columns:
             con.execute(f"ALTER TABLE achievements ADD COLUMN {name} {declaration}")
+    physical_columns=[r[1] for r in con.execute("PRAGMA table_info(physical_tests)")]
+    if "grade" not in physical_columns: con.execute("ALTER TABLE physical_tests ADD COLUMN grade TEXT")
     con.execute("CREATE INDEX IF NOT EXISTS idx_students_group ON students(group_code)")
     con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_students_isu_id ON students(isu_id) WHERE isu_id IS NOT NULL")
+    attendance_sql = con.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_log'").fetchone()[0]
+    if "UNIQUE(student_id, lesson_date)" in attendance_sql.replace(" ", "") or "unique(student_id,lesson_date)" in attendance_sql.lower().replace(" ", ""):
+        legacy = con.execute("SELECT id,student_id,lesson_date,topic,present FROM attendance_log").fetchall()
+        con.execute("PRAGMA foreign_keys=OFF")
+        con.execute("ALTER TABLE attendance_log RENAME TO attendance_log_legacy")
+        con.execute("CREATE TABLE attendance_log (id INTEGER PRIMARY KEY, student_id INTEGER NOT NULL REFERENCES students(id), lesson_date TEXT NOT NULL, topic TEXT NOT NULL, discipline TEXT NOT NULL DEFAULT 'Физическая культура и спорт', lesson_type TEXT NOT NULL DEFAULT 'Практическое занятие', grade TEXT, present INTEGER NOT NULL, UNIQUE(student_id, lesson_date, discipline, lesson_type))")
+        for row in legacy:
+            topic = str(row[3] or "Практическое занятие")
+            prefix, _, suffix = topic.partition(" · ")
+            discipline = "Элективная физическая культура и спорт" if prefix.strip().lower() in ("практика фкис", "элективная физическая культура и спорт") else "Физическая культура и спорт"
+            activity = suffix.strip() or topic
+            con.execute("INSERT INTO attendance_log(id,student_id,lesson_date,topic,discipline,lesson_type,present) VALUES(?,?,?,?,?,?,?)", (row[0],row[1],row[2],activity,discipline,activity,row[4]))
+        con.execute("DROP TABLE attendance_log_legacy")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_attendance_student_date ON attendance_log(student_id,lesson_date)")
+        con.execute("PRAGMA foreign_keys=ON")
+    con.executescript("""
+      CREATE TABLE IF NOT EXISTS student_accounts(email TEXT PRIMARY KEY,password_salt TEXT NOT NULL,password_hash TEXT NOT NULL,student_id INTEGER REFERENCES students(id),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+      CREATE TABLE IF NOT EXISTS student_submissions(id INTEGER PRIMARY KEY, email TEXT NOT NULL REFERENCES student_accounts(email), payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'На проверке', review_note TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, reviewed_at TEXT);
+      CREATE INDEX IF NOT EXISTS idx_student_submissions_status ON student_submissions(status,created_at);
+    """)
     con.commit(); con.close()
 
 def rows(sql, args=()):
-    con = connect(); result = [dict(r) for r in con.execute(sql,args).fetchall()]; con.close(); return result
+    shared = _REQUEST_CONNECTION.get()
+    con = shared or _new_connection()
+    try:
+        return [dict(r) for r in con.execute(sql,args).fetchall()]
+    finally:
+        if shared is None:
+            con.close()
 
 def decode_pdf(value):
     if not value:
@@ -140,44 +282,94 @@ def decode_pdf(value):
         raise ValueError("Подтверждающий документ должен быть файлом PDF.")
     return document
 
+def password_digest(password, salt=None):
+    salt = salt or os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 310_000).hex()
+    return salt, digest
+
+def notify_student(email, subject, text):
+    host = os.environ.get("SMTP_HOST", "").strip()
+    if not host or not os.environ.get("SMTP_FROM", "").strip():
+        return False
+    message = EmailMessage()
+    message["From"] = os.environ["SMTP_FROM"]
+    message["To"] = email
+    message["Subject"] = subject
+    message.set_content(text)
+    try:
+        with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT", "587")), timeout=10) as smtp:
+            smtp.starttls()
+            if os.environ.get("SMTP_USERNAME"):
+                smtp.login(os.environ["SMTP_USERNAME"], os.environ.get("SMTP_PASSWORD", ""))
+            smtp.send_message(message)
+        return True
+    except (OSError, smtplib.SMTPException, ValueError) as error:
+        print(f"Не удалось отправить уведомление студенту: {error}")
+        return False
+
 class App(SimpleHTTPRequestHandler):
     def __init__(self,*args,**kwargs): super().__init__(*args, directory=str(ROOT), **kwargs)
     def send_json(self, value, status=200):
         raw=json.dumps(value,ensure_ascii=False,default=lambda item:item.isoformat() if hasattr(item,"isoformat") else str(item)).encode(); self.send_response(status); self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
     def body(self): return json.loads(self.rfile.read(int(self.headers.get("Content-Length",0))) or b"{}")
-    def authenticated(self):
-        if not AUTH_ENABLED:
-            return True
+    def session_info(self):
         try:
             cookies = SimpleCookie(self.headers.get("Cookie", ""))
             token = cookies.get("fkis_session")
             if not token:
-                return False
+                return {"username": APP_USERNAME, "role": ROLES[0], "student_id": None} if not AUTH_ENABLED else None
             payload, signature = token.value.rsplit(".", 1)
             expected = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
             if not hmac.compare_digest(signature, expected):
-                return False
+                return None
             decoded = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode()
-            username, expiry = decoded.rsplit("|", 1)
-            return username == APP_USERNAME and int(expiry) > int(time.time())
+            username, role, student_id, expiry = decoded.rsplit("|", 3)
+            if int(expiry) <= int(time.time()) or role not in ROLES:
+                return None
+            if AUTH_ENABLED and role != "Студент" and ROLE_ACCOUNTS.get(role, (None,))[0] != username:
+                return None
+            if role == "Студент":
+                account = rows("SELECT student_id FROM student_accounts WHERE email=?", (username,))
+                if not account:
+                    return None
+                student_id = account[0]["student_id"]
+            return {"username": username, "role": role, "student_id": int(student_id) if student_id else None}
         except (ValueError, TypeError, UnicodeDecodeError):
-            return False
+            return None
+    def authenticated(self): return not AUTH_ENABLED or self.session_info() is not None
     def auth_required(self):
         if not AUTH_ENABLED or self.authenticated():
             return False
         self.send_json({"error":"Требуется войти в систему."},401)
         return True
-    def issue_session(self):
-        payload = base64.urlsafe_b64encode(f"{APP_USERNAME}|{int(time.time()) + 43200}".encode()).decode().rstrip("=")
+    def role_required(self, *roles):
+        if not AUTH_ENABLED:
+            session = self.session_info()
+        else:
+            session = self.session_info()
+        if session and session["role"] in roles:
+            return False
+        self.send_json({"error":"Недостаточно прав для этого действия."},403)
+        return True
+    def issue_session(self, username=APP_USERNAME, role=ROLES[0], student_id=None):
+        payload = base64.urlsafe_b64encode(f"{username}|{role}|{student_id or ''}|{int(time.time()) + 43200}".encode()).decode().rstrip("=")
         signature = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
         return payload + "." + signature
+    def set_session_cookie(self, username, role, student_id=None):
+        token = self.issue_session(username, role, student_id)
+        secure = self.headers.get("X-Forwarded-Proto", "").lower() == "https" or bool(os.environ.get("RENDER"))
+        self.send_header("Set-Cookie", f"fkis_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200" + ("; Secure" if secure else ""))
+    @share_read_connection
     def do_GET(self):
         path=urlparse(self.path).path
         query=parse_qs(urlparse(self.path).query)
         if path == "/health":
             self.send_json({"status":"ok"}); return
+        if path == "/api/registration-groups":
+            self.send_json({"groups":rows("SELECT group_code,COALESCE(display_code,group_code) AS display_code,faculty,direction,course FROM academic_groups ORDER BY faculty,direction,course,display_code")}); return
         if path == "/api/session":
-            self.send_json({"auth_enabled":AUTH_ENABLED,"authenticated":self.authenticated()}); return
+            session = self.session_info()
+            self.send_json({"auth_enabled":AUTH_ENABLED,"authenticated":self.authenticated(),"role":session["role"] if session else None,"username":session["username"] if session else None,"student_id":session["student_id"] if session else None}); return
         if path == "/login":
             self.path = "/login.html"
             return super().do_GET()
@@ -190,7 +382,66 @@ class App(SimpleHTTPRequestHandler):
             if path.startswith("/api/"):
                 self.auth_required(); return
             self.send_json({"error":"Требуется войти в систему."},401); return
+        if path == "/api/student-data":
+            if self.role_required("Студент"): return
+            session = self.session_info()
+            if not session["student_id"]:
+                pending = rows("SELECT id,payload,status,review_note,created_at FROM student_submissions WHERE email=? ORDER BY id DESC LIMIT 1",(session["username"],))
+                if pending:
+                    try: pending[0]["payload"]=json.loads(pending[0]["payload"])
+                    except (ValueError,TypeError): pending[0]["payload"]={}
+                    pending[0]["payload"].pop("document_base64",None)
+                self.send_json({"registered":False,"submission":pending[0] if pending else None}); return
+            student_id = session["student_id"]
+            student = rows("SELECT s.id,s.name,s.health,s.attendance,s.theory,s.practice,s.group_code,s.isu_id,s.enrollment_number,s.study_form,s.list_position,s.birth_date,s.theory_date,s.faculty,s.course,s.sport_before,s.elective,g.display_code FROM students s LEFT JOIN academic_groups g ON g.group_code=s.group_code WHERE s.id=?",(student_id,))
+            if not student: self.send_json({"error":"Карточка студента не найдена."},404); return
+            achievements = rows("SELECT category,details,record_date,status,sport_type,distinction,age_group,participant_role,event_result,team_name FROM achievements WHERE student_id=? ORDER BY id DESC",(student_id,))
+            physical = rows("SELECT record_date,exercise,result FROM physical_tests WHERE student_id=? ORDER BY record_date DESC",(student_id,))
+            self.send_json({"registered":True,"student":student[0],"achievements":achievements,"physical_tests":physical}); return
+        if path == "/api/my-submissions":
+            if self.role_required("Студент"): return
+            session=self.session_info()
+            self.send_json({"submissions":rows("SELECT id,status,review_note,created_at,reviewed_at FROM student_submissions WHERE email=? ORDER BY id DESC",(session["username"],))}); return
+        if path == "/api/pending-submissions":
+            if self.role_required("Ответственный исполнитель кафедры ФВ"): return
+            data=[]
+            for item in rows("SELECT id,email,payload,status,created_at FROM student_submissions WHERE status='На проверке' ORDER BY created_at,id"):
+                try: item["payload"]=json.loads(item["payload"])
+                except (ValueError,TypeError): item["payload"]={}
+                item["has_document"] = bool(item["payload"].pop("document_base64", None))
+                data.append(item)
+            self.send_json({"submissions":data}); return
+        if path == "/api/attendance-options":
+            self.send_json({"disciplines":FITNESS_DISCIPLINES,"lesson_types":LESSON_TYPES,"elective_activities":FITNESS_ACTIVITIES}); return
+        if path == "/api/consolidated":
+            if self.role_required("Преподаватель кафедры ФВ","Сотрудник ССК «Армада»","Ответственный исполнитель кафедры ФВ"): return
+            course_rows=rows("SELECT s.id,g.course,s.health,s.theory,s.practice FROM students s LEFT JOIN academic_groups g ON g.group_code=s.group_code")
+            awards=rows("SELECT s.id,g.course,a.category,a.participant_role,a.status FROM achievements a JOIN students s ON s.id=a.student_id LEFT JOIN academic_groups g ON g.group_code=s.group_code")
+            grouped={}; course_by_student={}
+            for student in course_rows:
+                course=student.get("course") or 0; key=str(course) if course else "0"; course_by_student[student["id"]]=key
+                item=grouped.setdefault(key,{"course":course or "Курс не указан","total":0,"main_health":0,"prep_health":0,"special_health":0,"theory_credit":0,"theory_no_credit":0,"practice_credit":0,"practice_no_credit":0,"teams":0,"sections":0,"gto":0,"ranks":0,"participants":0,"volunteers":0})
+                item["total"]+=1
+                health={"основная":"main_health","подготовительная":"prep_health","специальная":"special_health"}.get(str(student.get("health","")).lower())
+                if health: item[health]+=1
+                for source,target in (("theory","theory"),("practice","practice")):
+                    value=str(student.get(source,"")).lower()
+                    if value=="зачет": item[target+"_credit"]+=1
+                    elif value=="не зачет": item[target+"_no_credit"]+=1
+            for award in awards:
+                item=grouped.get(course_by_student.get(award["id"],"0"))
+                if not item: continue
+                category=str(award.get("category","")).lower()
+                if "гто" in category: item["gto"]+=1
+                elif "разряд" in category or "звание" in category: item["ranks"]+=1
+                elif "сборная" in category and award.get("status")!="Исключен": item["teams"]+=1
+                elif "секция" in category and award.get("status")!="Исключен": item["sections"]+=1
+                if "мероприят" in category:
+                    if award.get("participant_role")=="Участник": item["participants"]+=1
+                    elif award.get("participant_role")=="Волонтер": item["volunteers"]+=1
+            self.send_json({"courses":sorted(grouped.values(),key=lambda row:(not str(row["course"]).isdigit(),int(row["course"]) if str(row["course"]).isdigit() else 99))}); return
         group_code=query.get("group", [DEFAULT_GROUP])[0]
+        if path in ("/api/groups","/api/bootstrap","/api/export.xlsx") and self.role_required("Преподаватель кафедры ФВ","Сотрудник ССК «Армада»","Ответственный исполнитель кафедры ФВ"): return
         if path == "/api/groups":
             self.send_json({"groups": rows("SELECT g.group_code,COALESCE(g.display_code,g.group_code) AS display_code,g.faculty,g.direction,g.course,COUNT(s.id) AS students FROM academic_groups g LEFT JOIN students s ON s.group_code=g.group_code GROUP BY g.group_code ORDER BY g.faculty,g.direction,g.course,g.display_code")}); return
         if not rows("SELECT group_code FROM academic_groups WHERE group_code=?",(group_code,)):
@@ -255,10 +506,18 @@ class App(SimpleHTTPRequestHandler):
             stream=BytesIO(); wb.save(stream); raw=stream.getvalue()
             self.send_response(200); self.send_header("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); self.send_header("Content-Disposition",f"attachment; filename=fkis-{group_code}.xlsx"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw); return
         if path=="/api/bootstrap":
-            students=rows("SELECT students.*,CASE WHEN COUNT(a.id)>0 THEN ROUND(100.0*SUM(CASE WHEN a.present THEN 1 ELSE 0 END)/COUNT(a.id)) ELSE students.attendance END AS computed_attendance,COUNT(a.id) AS attendance_records_count FROM students LEFT JOIN attendance_log a ON a.student_id=students.id WHERE group_code=? GROUP BY students.id ORDER BY COALESCE(list_position,2147483647),name", (group_code,))
+            if DATABASE_URL:
+                lesson_date=query.get("date", [date.today().isoformat()])[0]
+                discipline=query.get("discipline",[""])[0]; lesson_type=query.get("lesson_type",[""])[0]
+                payload=rows(POSTGRES_BOOTSTRAP_QUERY,(group_code,lesson_date,discipline,lesson_type))[0]["data"]
+                if isinstance(payload,str): payload=json.loads(payload)
+                payload["group"]=group_code
+                payload["today"]=date.today().isoformat()
+                self.send_json(payload); return
+            students=rows("SELECT students.id,students.name,students.health,students.attendance,students.theory,students.practice,students.group_code,students.isu_id,students.enrollment_number,students.study_form,students.list_position,students.birth_date,students.theory_date,CASE WHEN COUNT(a.id)>0 THEN ROUND(100.0*SUM(CASE WHEN a.present THEN 1 ELSE 0 END)/COUNT(a.id)) ELSE students.attendance END AS computed_attendance,COUNT(a.id) AS attendance_records_count FROM students LEFT JOIN attendance_log a ON a.student_id=students.id WHERE group_code=? GROUP BY students.id ORDER BY COALESCE(list_position,2147483647),name", (group_code,))
             achievements=rows("SELECT a.id,a.student_id,s.name,a.category,a.details,a.record_date,a.status,a.sport_type,a.distinction,a.age_group,a.order_basis,a.participant_role,a.event_result,a.note,a.document_name,a.team_name FROM achievements a JOIN students s ON s.id=a.student_id WHERE s.group_code=? ORDER BY a.id DESC", (group_code,))
             physical_tests=rows("SELECT p.*,s.name FROM physical_tests p JOIN students s ON s.id=p.student_id WHERE s.group_code=? ORDER BY p.record_date DESC,p.id DESC", (group_code,))
-            attendance_records=rows("SELECT student_id,present,topic FROM attendance_log WHERE lesson_date=? AND student_id IN (SELECT id FROM students WHERE group_code=?)", (query.get("date", [date.today().isoformat()])[0], group_code))
+            attendance_records=rows("SELECT student_id,present,topic,discipline,lesson_type,grade FROM attendance_log WHERE lesson_date=? AND discipline=? AND lesson_type=? AND student_id IN (SELECT id FROM students WHERE group_code=?)", (query.get("date", [date.today().isoformat()])[0],query.get("discipline",[""])[0],query.get("lesson_type",[""])[0],group_code)) if query.get("discipline") and query.get("lesson_type") else []
             attendance_trend=rows("SELECT lesson_date,COUNT(*) AS total,SUM(CASE WHEN present THEN 1 ELSE 0 END) AS present FROM attendance_log WHERE student_id IN (SELECT id FROM students WHERE group_code=?) GROUP BY lesson_date ORDER BY lesson_date DESC LIMIT 7", (group_code,))
             summary = {
                 "health": rows("SELECT health AS label,COUNT(*) AS count FROM students WHERE group_code=? GROUP BY health ORDER BY health", (group_code,)),
@@ -269,6 +528,7 @@ class App(SimpleHTTPRequestHandler):
             }
             self.send_json({"students":students,"achievements":achievements,"physical_tests":physical_tests,"attendance_records":attendance_records,"attendance_trend":attendance_trend,"summary":summary,"group":group_code,"today":date.today().isoformat()}); return
         if path.startswith("/api/achievement-document/"):
+            if self.role_required("Сотрудник ССК «Армада»","Ответственный исполнитель кафедры ФВ","Преподаватель кафедры ФВ"): return
             achievement_id=int(path.rsplit("/",1)[1]); con=connect(); item=con.execute("SELECT document_name,document_data FROM achievements WHERE id=?",(achievement_id,)).fetchone(); con.close()
             if not item or not item[1]: self.send_error(404); return
             raw=bytes(item[1]); name=quote(item[0] or "document.pdf")
@@ -279,11 +539,16 @@ class App(SimpleHTTPRequestHandler):
         path=urlparse(self.path).path; data=self.body(); con=connect()
         try:
             if path.startswith("/api/students/"):
+                if self.role_required("Ответственный исполнитель кафедры ФВ"): return
                 student_id=int(path.rsplit("/",1)[1])
                 con.execute("UPDATE students SET name=?,health=?,attendance=?,theory=?,practice=?,birth_date=?,theory_date=? WHERE id=?",(data["name"].strip(),data["health"],int(data["attendance"]),data["theory"],data["practice"],data.get("birth_date") or None,data.get("theory_date") or None,student_id))
                 con.commit(); self.send_json({"ok":True}); return
             if path.startswith("/api/achievements/"):
+                if self.role_required("Сотрудник ССК «Армада»"): return
                 achievement_id=int(path.rsplit("/",1)[1])
+                if data["category"] not in ACHIEVEMENT_CATEGORIES and data["category"]!="Сборная команда (секция)": raise ValueError("Выберите раздел спортивного учета.")
+                required={"Спортивное звание (разряд)":("sport_type","distinction"),"ВФСК «ГТО»":("age_group","distinction"),"Сборная команда":("team_name",),"Спортивная секция":("sport_type",),"Спортивное мероприятие":("details","participant_role"),"Сборная команда (секция)":("team_name",)}[data["category"]]
+                if any(not str(data.get(field,"")).strip() for field in required): raise ValueError("Заполните обязательные поля выбранного раздела.")
                 document=decode_pdf(data.get("document_base64"))
                 con.execute("UPDATE achievements SET student_id=?,category=?,details=?,record_date=?,status=?,sport_type=?,distinction=?,age_group=?,order_basis=?,participant_role=?,event_result=?,note=?,document_name=CASE WHEN ? THEN NULL WHEN ? IS NOT NULL THEN ? ELSE document_name END,document_data=CASE WHEN ? THEN NULL WHEN ? IS NOT NULL THEN ? ELSE document_data END,team_name=? WHERE id=?",(int(data["student_id"]),data["category"],data.get("details","").strip(),data["record_date"],data["status"],data.get("sport_type"),data.get("distinction"),data.get("age_group"),data.get("order_basis"),data.get("participant_role"),data.get("event_result"),data.get("note"),bool(data.get("remove_document")),document,data.get("document_name"),bool(data.get("remove_document")),document,document,data.get("team_name"),achievement_id))
                 con.commit(); self.send_json({"ok":True}); return
@@ -292,28 +557,135 @@ class App(SimpleHTTPRequestHandler):
         finally: con.close()
     def do_POST(self):
         path=urlparse(self.path).path; data=self.body()
+        if path == "/api/demo-role":
+            if AUTH_ENABLED or data.get("role") not in ROLES:
+                self.send_json({"error":"Переключение ролей доступно только в локальном демонстрационном режиме."},403); return
+            role=data["role"]
+            username=APP_USERNAME
+            if role=="Студент":
+                username="demo.student@fkis.local"
+                if not rows("SELECT 1 FROM student_accounts WHERE email=?",(username,)):
+                    salt,digest=password_digest("local-demo-account-not-for-production")
+                    con=connect()
+                    try: con.execute("INSERT INTO student_accounts(email,password_salt,password_hash) VALUES(?,?,?)",(username,salt,digest)); con.commit()
+                    finally: con.close()
+            self.send_response(200); self.send_header("Content-Type","application/json; charset=utf-8"); self.set_session_cookie(username,role); self.end_headers(); self.wfile.write(json.dumps({"ok":True,"role":role}).encode()); return
+        if path == "/api/register":
+            email=str(data.get("email", "")).strip().lower(); password=str(data.get("password", "")); name=" ".join(str(data.get("name", "")).split())
+            if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email): self.send_json({"error":"Укажите корректный адрес электронной почты."},400); return
+            if len(password)<12: self.send_json({"error":"Пароль должен содержать не менее 12 символов."},400); return
+            if len(name.split())<2 or not data.get("birth_date") or not data.get("faculty") or not data.get("course") or data.get("personal_data_consent") is not True:
+                self.send_json({"error":"Заполните ФИО, дату рождения, факультет, курс и подтвердите согласие на обработку данных."},400); return
+            con=connect()
+            try:
+                if not con.execute("SELECT 1 FROM academic_groups WHERE group_code=?",(data.get("group_code"),)).fetchone(): raise ValueError("Выберите учебную группу.")
+                salt,digest=password_digest(password)
+                con.execute("INSERT INTO student_accounts(email,password_salt,password_hash) VALUES(?,?,?)",(email,salt,digest))
+                profile={key:data.get(key) for key in ("name","birth_date","group_code","faculty","course","health","sport_before","elective","personal_data_consent","isu_id")}
+                if data.get("category"):
+                    profile.update({key:data.get(key) for key in ("category","sport_type","distinction","age_group","team_name","section","event_name","participant_role","event_result","record_date","order_basis","document_name","document_base64")})
+                    if data["category"] not in ACHIEVEMENT_CATEGORIES: raise ValueError("Неизвестный раздел достижения.")
+                    required={"Спортивное звание (разряд)":("sport_type","distinction"),"ВФСК «ГТО»":("age_group","distinction"),"Сборная команда":("team_name",),"Спортивная секция":("section",),"Спортивное мероприятие":("event_name","participant_role")}[data["category"]]
+                    if any(not str(data.get(field,"")).strip() for field in required): raise ValueError("Заполните обязательные поля выбранного достижения.")
+                profile.update({"kind":"profile","email":email})
+                con.execute("INSERT INTO student_submissions(email,payload) VALUES(?,?)",(email,json.dumps(profile,ensure_ascii=False)))
+                con.commit(); self.send_response(201); self.send_header("Content-Type","application/json; charset=utf-8"); self.set_session_cookie(email,"Студент"); self.end_headers(); self.wfile.write(json.dumps({"ok":True,"message":"Заявка создана и отправлена ответственному исполнителю."},ensure_ascii=False).encode()); return
+            except (KeyError,ValueError,*DB_ERRORS) as error:
+                con.rollback(); self.send_json({"error":"Такой аккаунт уже существует." if "unique" in str(error).lower() or "duplicate" in str(error).lower() else str(error)},400)
+            finally: con.close()
         if path=="/api/login":
             username=str(data.get("username", "")); password=str(data.get("password", ""))
-            if not AUTH_ENABLED or not hmac.compare_digest(username, APP_USERNAME) or not hmac.compare_digest(password, APP_PASSWORD):
+            role=str(data.get("role", ROLES[0])); username=username.strip().lower() if role=="Студент" else username.strip()
+            authenticated=False; student_id=None
+            if role == "Студент":
+                account=rows("SELECT password_salt,password_hash,student_id FROM student_accounts WHERE email=?",(username,))
+                if account:
+                    salt,digest=password_digest(password,account[0]["password_salt"])
+                    authenticated=hmac.compare_digest(digest,account[0]["password_hash"])
+                    student_id=account[0]["student_id"]
+            elif AUTH_ENABLED and role in ROLES:
+                    expected_user,expected_password=ROLE_ACCOUNTS.get(role,("",""))
+                    authenticated=bool(expected_password and hmac.compare_digest(username,expected_user) and hmac.compare_digest(password,expected_password))
+            elif not AUTH_ENABLED and role in ROLES:
+                authenticated=True
+            if not authenticated:
                 self.send_json({"error":"Неверный логин или пароль."},401); return
-            token=self.issue_session(); secure=self.headers.get("X-Forwarded-Proto", "").lower()=="https" or bool(os.environ.get("RENDER"))
-            self.send_response(200); self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Set-Cookie", f"fkis_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200" + ("; Secure" if secure else "")); self.end_headers(); self.wfile.write(b'{"ok":true}'); return
+            self.send_response(200); self.send_header("Content-Type","application/json; charset=utf-8"); self.set_session_cookie(username,role,student_id); self.end_headers(); self.wfile.write(json.dumps({"ok":True,"role":role}).encode()); return
         if path=="/api/logout":
             self.send_response(200); self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Set-Cookie","fkis_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"); self.end_headers(); self.wfile.write(b'{"ok":true}'); return
         if self.auth_required(): return
         con=connect()
         try:
+            if path=="/api/student-submissions":
+                if self.role_required("Студент"): return
+                session=self.session_info()
+                payload=dict(data); payload.update({"kind":"achievement" if data.get("category") else "profile","email":session["username"]})
+                if not data.get("category") and (len(str(data.get("name","")).split())<2 or not data.get("birth_date") or not data.get("faculty") or not data.get("course") or data.get("personal_data_consent") is not True): raise ValueError("Заполните ФИО, дату рождения, факультет, курс и согласие на обработку персональных данных.")
+                if not data.get("category") and not con.execute("SELECT 1 FROM academic_groups WHERE group_code=?",(data.get("group_code"),)).fetchone(): raise ValueError("Выберите учебную группу.")
+                if data.get("category") and data["category"] not in ACHIEVEMENT_CATEGORIES: raise ValueError("Выберите раздел спортивного учета.")
+                if data.get("category"):
+                    required={"Спортивное звание (разряд)":("sport_type","distinction"),"ВФСК «ГТО»":("birth_date","age_group","distinction"),"Сборная команда":("team_name",),"Спортивная секция":("section",),"Спортивное мероприятие":("event_name","participant_role")}[data["category"]]
+                    if any(not str(data.get(field,"")).strip() for field in required): raise ValueError("Заполните обязательные поля выбранного раздела.")
+                con.execute("INSERT INTO student_submissions(email,payload) VALUES(?,?)",(session["username"],json.dumps(payload,ensure_ascii=False)))
+                con.commit(); self.send_json({"ok":True,"message":"Данные отправлены на проверку ответственному исполнителю."},201); return
+            if path.startswith("/api/review-submission/"):
+                if self.role_required("Ответственный исполнитель кафедры ФВ"): return
+                submission_id=int(path.rsplit("/",1)[1]); status=data.get("status"); note=str(data.get("note", "")).strip()
+                if status not in ("Подтверждено","Отклонено") or (status=="Отклонено" and not note): raise ValueError("Укажите решение; при отказе обязательно напишите причину.")
+                item=con.execute("SELECT * FROM student_submissions WHERE id=?",(submission_id,)).fetchone()
+                if not item or item["status"]!="На проверке": raise ValueError("Заявка уже рассмотрена или не найдена.")
+                payload=json.loads(item["payload"]); email=item["email"]; student_id=None
+                if status=="Подтверждено":
+                    if payload.get("kind")=="profile":
+                        group=payload["group_code"]; isu_id=str(payload.get("isu_id") or "").strip() or None
+                        account=con.execute("SELECT student_id FROM student_accounts WHERE email=?",(email,)).fetchone()
+                        existing=con.execute("SELECT id FROM students WHERE id=?",(account["student_id"],)).fetchone() if account and account["student_id"] else con.execute("SELECT id FROM students WHERE group_code=? AND ((? IS NOT NULL AND isu_id=?) OR name=?) LIMIT 1",(group,isu_id,isu_id,payload["name"])).fetchone()
+                        if existing:
+                            linked=con.execute("SELECT email FROM students WHERE id=?",(existing["id"],)).fetchone()
+                            if linked["email"] and linked["email"].lower()!=email.lower(): raise ValueError("Эта карточка уже связана с другой учетной записью. Проверьте заявку вручную.")
+                            student_id=existing["id"]
+                        else:
+                            cursor=con.execute("INSERT INTO students(name,health,attendance,theory,practice,group_code,birth_date,email,faculty,course,sport_before,elective,personal_data_consent,isu_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",(payload["name"],payload.get("health") or "не указана",0,"не указано","не указано",group,payload.get("birth_date"),email,payload.get("faculty"),int(payload["course"]),payload.get("sport_before"),payload.get("elective"),True,isu_id)); student_id=cursor.fetchone()["id"]
+                        con.execute("UPDATE students SET name=?,group_code=?,health=?,birth_date=?,email=?,faculty=?,course=?,sport_before=?,elective=?,personal_data_consent=?,isu_id=COALESCE(isu_id,?) WHERE id=?",(payload["name"],group,payload.get("health") or "не указана",payload.get("birth_date"),email,payload.get("faculty"),int(payload["course"]),payload.get("sport_before"),payload.get("elective"),True,isu_id,student_id))
+                        con.execute("UPDATE student_accounts SET student_id=? WHERE email=?",(student_id,email))
+                        if payload.get("category"):
+                            category=payload["category"]
+                            if category not in ACHIEVEMENT_CATEGORIES: raise ValueError("Неизвестный раздел достижения.")
+                            required={"Спортивное звание (разряд)":("sport_type","distinction"),"ВФСК «ГТО»":("age_group","distinction"),"Сборная команда":("team_name",),"Спортивная секция":("section",),"Спортивное мероприятие":("event_name","participant_role")}[category]
+                            if any(not str(payload.get(field,"")).strip() for field in required): raise ValueError("Заполните обязательные поля достижения в заявке.")
+                            document=decode_pdf(payload.get("document_base64"))
+                            con.execute("INSERT INTO achievements(student_id,category,details,record_date,status,sport_type,distinction,age_group,order_basis,participant_role,event_result,team_name,document_name,document_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(student_id,category,payload.get("event_name", ""),payload.get("record_date") or date.today().isoformat(),"Подтверждено",payload.get("sport_type") or payload.get("section"),payload.get("distinction"),payload.get("age_group"),payload.get("order_basis"),payload.get("participant_role"),payload.get("event_result"),payload.get("team_name"),payload.get("document_name"),document))
+                    elif payload.get("kind")=="achievement":
+                        account=con.execute("SELECT student_id FROM student_accounts WHERE email=?",(email,)).fetchone()
+                        if not account or not account["student_id"]: raise ValueError("Сначала подтвердите профиль студента.")
+                        student_id=account["student_id"]; category=payload["category"]
+                        fields={"student_id":student_id,"category":category,"details":payload.get("event_name", ""),"record_date":payload.get("record_date") or date.today().isoformat(),"status":"Подтверждено","sport_type":payload.get("sport_type") or payload.get("section"),"distinction":payload.get("distinction"),"age_group":payload.get("age_group"),"order_basis":payload.get("order_basis"),"participant_role":payload.get("participant_role"),"event_result":payload.get("event_result"),"note":payload.get("note"),"document_name":payload.get("document_name"),"document_data":decode_pdf(payload.get("document_base64")),"team_name":payload.get("team_name")}
+                        con.execute("INSERT INTO achievements(student_id,category,details,record_date,status,sport_type,distinction,age_group,order_basis,participant_role,event_result,note,document_name,document_data,team_name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",tuple(fields.values()))
+                    else: raise ValueError("Неизвестный тип заявки.")
+                con.execute("UPDATE student_submissions SET status=?,review_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?",(status,note or None,submission_id)); con.commit()
+                notice="Данные подтверждены." if status=="Подтверждено" else f"Заявка отклонена. Причина: {note}"
+                email_sent=notify_student(email,"Результат проверки данных ФКиС СПбГМТУ",notice)
+                self.send_json({"ok":True,"email_sent":email_sent}); return
             if path=="/api/attendance":
-                for item in data.get("items",[]): con.execute("INSERT INTO attendance_log(student_id,lesson_date,topic,present) VALUES(?,?,?,?) ON CONFLICT(student_id,lesson_date) DO UPDATE SET topic=excluded.topic,present=excluded.present",(item["id"],data.get("lesson_date","2026-09-16"),data.get("topic","Общая физическая подготовка"),bool(item["present"])))
+                if self.role_required("Преподаватель кафедры ФВ"): return
+                discipline=data.get("discipline"); lesson_type=data.get("lesson_type")
+                allowed=LESSON_TYPES if discipline==FITNESS_DISCIPLINES[0] else FITNESS_ACTIVITIES if discipline==FITNESS_DISCIPLINES[1] else ()
+                if lesson_type not in allowed: raise ValueError("Выберите занятие для указанной дисциплины.")
+                for item in data.get("items",[]): con.execute("INSERT INTO attendance_log(student_id,lesson_date,topic,discipline,lesson_type,grade,present) VALUES(?,?,?,?,?,?,?) ON CONFLICT(student_id,lesson_date,discipline,lesson_type) DO UPDATE SET topic=excluded.topic,grade=excluded.grade,present=excluded.present",(item["id"],data.get("lesson_date"),lesson_type,discipline,lesson_type,item.get("grade"),bool(item["present"])))
                 con.commit(); self.send_json({"ok":True}); return
             if path=="/api/physical-tests":
-                con.execute("INSERT INTO physical_tests(student_id,record_date,exercise,result) VALUES(?,?,?,?) ON CONFLICT(student_id,record_date,exercise) DO UPDATE SET result=excluded.result",(int(data["student_id"]),data["record_date"],data["exercise"].strip(),data["result"].strip()))
+                if self.role_required("Преподаватель кафедры ФВ"): return
+                con.execute("INSERT INTO physical_tests(student_id,record_date,exercise,result,grade) VALUES(?,?,?,?,?) ON CONFLICT(student_id,record_date,exercise) DO UPDATE SET result=excluded.result,grade=excluded.grade",(int(data["student_id"]),data["record_date"],data["exercise"].strip(),data["result"].strip(),data.get("grade")))
                 con.commit(); self.send_json({"ok":True}); return
             if path=="/api/achievements":
+                if self.role_required("Сотрудник ССК «Армада»"): return
                 if data["category"] not in ACHIEVEMENT_CATEGORIES: raise ValueError("Выберите раздел спортивного учета.")
+                required={"Спортивное звание (разряд)":("sport_type","distinction"),"ВФСК «ГТО»":("age_group","distinction"),"Сборная команда":("team_name",),"Спортивная секция":("sport_type",),"Спортивное мероприятие":("details","participant_role")}[data["category"]]
+                if any(not str(data.get(field,"")).strip() for field in required): raise ValueError("Заполните обязательные поля выбранного раздела.")
                 document=decode_pdf(data.get("document_base64"))
                 con.execute("INSERT INTO achievements(student_id,category,details,record_date,status,sport_type,distinction,age_group,order_basis,participant_role,event_result,note,document_name,document_data,team_name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(int(data["student_id"]),data["category"],data.get("details","").strip(),data.get("record_date") or date.today().strftime("%d.%m.%Y"),data.get("status","Подтверждено"),data.get("sport_type"),data.get("distinction"),data.get("age_group"),data.get("order_basis"),data.get("participant_role"),data.get("event_result"),data.get("note"),data.get("document_name"),document,data.get("team_name"))); con.commit(); self.send_json({"ok":True},201); return
             if path=="/api/students":
+                if self.role_required("Ответственный исполнитель кафедры ФВ"): return
                 group_code=data.get("group_code",DEFAULT_GROUP)
                 if not con.execute("SELECT 1 FROM academic_groups WHERE group_code=?",(group_code,)).fetchone(): raise ValueError("Выберите группу из списка ИСУ.")
                 cur=con.execute("INSERT INTO students(name,health,attendance,theory,practice,group_code) VALUES(?,?,?,?,?,?) RETURNING id",(data["name"],data.get("health","не указана"),0,"не указано","не указано",group_code)); student_id=cur.fetchone()["id"]; con.commit(); self.send_json({"id":student_id},201); return

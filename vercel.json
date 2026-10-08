@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/api/:endpoint/:id",
+      "destination": "/api/router?__vercel_path=:endpoint/:id"
+    },
+    {
+      "source": "/api/:endpoint",
+      "destination": "/api/router?__vercel_path=:endpoint"
+    },
+    {
+      "source": "/login",
+      "destination": "/login.html"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/router?__vercel_path=health"
+    }
+  ]
+}

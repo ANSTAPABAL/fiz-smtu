@@ -3,7 +3,8 @@
     const value = String(category || '').toLowerCase();
     if (value.includes('гто')) return 'gto';
     if (value.includes('разряд') || value.includes('звание')) return 'rank';
-    if (value.includes('сборная') || value.includes('секция')) return 'team';
+    if (value.includes('сборная')) return 'team';
+    if (value.includes('секция') && !value.includes('сборная')) return 'section';
     if (value.includes('мероприят')) return 'event';
     return 'other';
   };
