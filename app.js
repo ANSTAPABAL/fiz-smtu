@@ -50,6 +50,18 @@ function addStudentDocumentInput() {
   const label=document.createElement('label'); label.className='submission-field'; label.dataset.for='rank gto event'; label.hidden=true; label.textContent='Подтверждающий документ (PDF)';
   const input=document.createElement('input'); input.id='submissionDocument'; input.type='file'; input.accept='application/pdf,.pdf'; label.append(input); grid.append(label);
 }
+function addEventStatusFields() {
+  for (const [id, className, before] of [
+    ['achievementEventStatus','achievement-field','#achievementResult'],
+    ['editAchievementEventStatus','edit-achievement-field','#editAchievementResult'],
+    ['submissionEventStatus','submission-field','#submissionResult']
+  ]) {
+    if ($('#'+id)) continue;
+    const label=document.createElement('label'); label.className=className; label.dataset.for='event'; label.hidden=true; label.textContent='Статус спортивного мероприятия';
+    const input=document.createElement('input'); input.id=id; input.placeholder='Например, Спартакиада СПбГМТУ';
+    label.append(input); $(before).parentElement.insertBefore(label,$(before));
+  }
+}
 async function api(url, method = 'GET', body) {
   const response = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body:body && JSON.stringify(body)});
   if (response.status === 401 && !location.pathname.startsWith('/login')) { location.assign('/login'); throw new Error('Сессия завершена. Войдите снова.'); }
@@ -115,8 +127,8 @@ function render() {
   $('#healthBody').innerHTML=students.map((student,index)=>`<tr><td>${index+1}</td><td><b>${escapeHtml(student.name)}</b></td><td><select data-health-student="${student.id}" aria-label="Группа здоровья: ${escapeHtml(student.name)}"><option value="" ${!['основная','подготовительная','специальная'].includes(String(student.health).toLowerCase())?'selected':''}>Выберите группу здоровья</option>${['основная','подготовительная','специальная'].map(value=>`<option ${String(student.health).toLowerCase()===value?'selected':''}>${value}</option>`).join('')}</select></td><td><button class="detail-button" data-save-health="${student.id}">Сохранить</button></td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">Список группы пуст.</td></tr>';
   $('#achievementBody').innerHTML = achievements.map(item => {
     const key = categoryKey(item.category);
-    const sportOrEvent = key === 'rank' ? item.sport_type : key === 'team' ? item.team_name : key === 'section' ? item.sport_type : key === 'event' ? item.details : '';
-    const distinction = key === 'gto' ? `${item.distinction || ''}${item.age_group ? ` · ${item.age_group}` : ''}` : key === 'rank' ? item.distinction : key === 'team' || key === 'section' ? item.status : item.event_result || item.participant_role;
+    const sportOrEvent = key === 'rank' ? item.sport_type : key === 'team' ? item.team_name : key === 'section' ? item.sport_type : key === 'event' ? [item.details,item.event_status].filter(Boolean).join(' · ') : '';
+    const distinction = key === 'gto' ? `${item.distinction || ''}${item.age_group ? ` · ${item.age_group}` : ''}` : key === 'rank' ? item.distinction : key === 'team' || key === 'section' ? item.status : [item.participant_role,item.event_result].filter(Boolean).join(' · ');
     return `<tr><td><b>${escapeHtml(item.name)}</b></td><td>${escapeHtml(item.category)}</td><td>${escapeHtml(sportOrEvent || '—')}</td><td>${escapeHtml(distinction || item.details || '—')}</td><td>${escapeHtml(displayDate(item.record_date))}</td><td>${item.document_name ? `<a class="document-link" href="/api/achievement-document/${item.id}">${escapeHtml(item.document_name)}</a>` : '—'}</td><td><span class="status ${statusClass(item.status)}">${escapeHtml(item.status)}</span></td><td><button class="detail-button" data-achievement="${item.id}">Изменить</button></td></tr>`;
   }).join('');
   $('#attentionList').innerHTML = students.filter(student => Number(student.attendance) > 0 && Number(student.attendance) < 70).map(student => `<div class="attention-row"><span class="avatar">${escapeHtml(initials(student.name))}</span><div><b>${escapeHtml(shortName(student.name))}</b><small>${escapeHtml(window.groupDisplayName?.(activeGroup) || activeGroup)}</small></div><span class="attendance-score">${student.attendance}%</span></div>`).join('') || '<p class="empty-state">Нет студентов с посещаемостью ниже 70%.</p>';
@@ -138,18 +150,17 @@ function renderGroupRoster() {
     const records=achievements.filter(item=>Number(item.student_id)===Number(student.id));
     const active=records.filter(item=>!['исключен','не действует'].includes(String(item.status).toLowerCase()));
     const teams=active.filter(item=>categoryKey(item.category)==='team').map(item=>item.team_name||item.details).filter(Boolean);
-    const sections=active.filter(item=>categoryKey(item.category)==='section').map(item=>item.sport_type||item.details).filter(Boolean);
     const gto=active.filter(item=>categoryKey(item.category)==='gto').map(item=>item.distinction).filter(Boolean);
     const ranks=active.filter(item=>categoryKey(item.category)==='rank').map(item=>item.distinction).filter(Boolean);
     const events=records.filter(item=>categoryKey(item.category)==='event');
     const achievement=events.map(item=>[item.details,item.event_result||item.participant_role].filter(Boolean).join(': ')).filter(Boolean);
     const initialsName=student.name.split(/\s+/).map((part,i)=>i?`${part[0]}.`:part).join(' ');
-    return `<tr><td>${index+1}</td><td><button class="detail-button" data-student="${student.id}">${escapeHtml(initialsName)}</button></td><td>${escapeHtml(student.health||'не указана')}</td><td>${escapeHtml(student.theory||'не указано')}</td><td>${escapeHtml(student.practice||'не указано')}</td><td>не указано</td><td>${escapeHtml(teams.join(', ')||'—')}</td><td>${escapeHtml(sections.join(', ')||'—')}</td><td>${escapeHtml(gto.join(', ')||'—')}</td><td>${escapeHtml(ranks.join(', ')||'—')}</td><td>${escapeHtml(achievement.join('; ')||'—')}</td><td>${events.filter(item=>item.participant_role==='Участник').length}</td><td>${events.filter(item=>item.participant_role==='Волонтер').length}</td></tr>`;
-  }).join('')||'<tr><td colspan="13" class="empty-state">Список группы пуст.</td></tr>';
+    return `<tr><td>${index+1}</td><td><button class="detail-button" data-student="${student.id}">${escapeHtml(initialsName)}</button></td><td>${escapeHtml(student.health||'не указана')}</td><td>${escapeHtml(student.theory||'не указано')}</td><td>${escapeHtml(student.practice||'не указано')}</td><td>не указано</td><td>${escapeHtml(teams.join(', ')||'—')}</td><td>${escapeHtml(gto.join(', ')||'—')}</td><td>${escapeHtml(ranks.join(', ')||'—')}</td><td>${escapeHtml(achievement.join('; ')||'—')}</td><td>${events.filter(item=>item.participant_role==='Участник').length}</td><td>${events.filter(item=>item.participant_role==='Волонтер').length}</td></tr>`;
+  }).join('')||'<tr><td colspan="12" class="empty-state">Список группы пуст.</td></tr>';
 }
 function renderPhysical() {
   const position = new Map(students.map((student, index) => [student.id, index + 1]));
-  $('#physicalBody').innerHTML = physicalTests.map(item => `<tr><td>${position.get(item.student_id) || '—'}</td><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.exercise)}</td><td>${escapeHtml(item.result)}</td><td>${escapeHtml(item.grade || 'Нет норматива')}</td><td>${escapeHtml(displayDate(item.record_date))}</td><td><button class="detail-button" data-physical="${item.id}">Изменить</button></td></tr>`).join('') || '<tr><td colspan="7" class="empty-state">Результаты испытаний пока не внесены.</td></tr>';
+  $('#physicalBody').innerHTML = physicalTests.map(item => `<tr><td>${position.get(item.student_id) || '—'}</td><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.test_category||'не указано')}</td><td>${escapeHtml(item.exercise)}</td><td>${escapeHtml(item.result)}</td><td>${escapeHtml(item.grade || 'Нет норматива')}</td><td>${escapeHtml(displayDate(item.record_date))}</td><td><button class="detail-button" data-physical="${item.id}">Изменить</button></td></tr>`).join('') || '<tr><td colspan="8" class="empty-state">Результаты испытаний пока не внесены.</td></tr>';
 }
 function renderStats() {
   const total = students.length;
@@ -170,7 +181,7 @@ function renderStats() {
 }
 async function renderConsolidated() {
   const {rows}=await api('/api/consolidated');
-  $('#consolidatedBody').innerHTML=rows.map(row=>`<tr class="summary-${escapeHtml(row.level)}">${[row.label,row.total,row.main_health,row.prep_health,row.special_health,row.theory_credit,row.theory_no_credit,row.practice_credit,row.practice_no_credit,row.overall_grade||'—',row.teams,row.sections,row.gto_gold,row.gto_silver,row.gto_bronze,row.gto_none,row.ms,row.kms,row.rank1,row.rank2,row.rank3,row.rank_none,row.sport_achievements,row.participants,row.volunteers].map(value=>`<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('')||'<tr><td colspan="25" class="empty-state">Данных пока нет.</td></tr>';
+  $('#consolidatedBody').innerHTML=rows.map(row=>`<tr class="summary-${escapeHtml(row.level)}">${[row.label,row.total,row.main_health,row.prep_health,row.special_health,row.theory_credit,row.theory_no_credit,row.practice_credit,row.practice_no_credit,row.overall_grade||'—',row.teams,row.gto_gold,row.gto_silver,row.gto_bronze,row.gto_none,row.ms,row.kms,row.rank1,row.rank2,row.rank3,row.rank_none,row.sport_achievements,row.participants,row.volunteers].map(value=>`<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('')||'<tr><td colspan="24" class="empty-state">Данных пока нет.</td></tr>';
 }
 function applyStudentFilter() {
   document.querySelectorAll('#studentsBody tr').forEach((row,index) => {
@@ -220,20 +231,30 @@ async function loadStudentPortal() {
   const teams=data.achievements.filter(item=>categoryKey(item.category)==='team'&&item.status!=='Исключен');
   const sections=data.achievements.filter(item=>categoryKey(item.category)==='section'&&item.status!=='Исключен');
   const achievementDetails=data.achievements.map(item=>`<li>${escapeHtml(item.category)}: ${escapeHtml(item.details||item.distinction||item.team_name||item.sport_type||'запись')} · ${escapeHtml(item.status||'')}</li>`).join('');
-  const eventDetails=events.map(item=>`<li>${escapeHtml(item.details||'Мероприятие')} · ${escapeHtml(item.participant_role||'роль не указана')} · ${escapeHtml(item.event_result||'результат не указан')} · ${escapeHtml(displayDate(item.record_date))}</li>`).join('');
-  $('#studentCardData').innerHTML=data.registered?`<div class="detail-grid"><div><span>ФИО</span><b>${escapeHtml(data.student.name)}</b></div><div><span>Дата рождения</span><b>${escapeHtml(displayDate(data.student.birth_date))}</b></div><div><span>Учебная группа</span><b>${escapeHtml(data.student.display_code||data.student.group_code)}</b></div><div><span>Группа здоровья</span><b>${escapeHtml(data.student.health||'не указана')}</b></div><div><span>ВФСК «ГТО»</span><b>${escapeHtml(gto.map(item=>item.distinction).filter(Boolean).join(', ')||'отсутствует')}</b></div><div><span>Спортивное звание (разряд)</span><b>${escapeHtml(ranks.map(item=>item.distinction).filter(Boolean).join(', ')||'отсутствует')}</b></div><div><span>Теория и методика ФКиС</span><b>${escapeHtml(data.student.theory||'не указано')} · дата: ${escapeHtml(displayDate(data.student.theory_date)||'не указана')}</b></div><div><span>Посещаемость ФКиС</span><b>${Number(data.attendance?.present||0)} из ${Number(data.attendance?.total||0)} отметок · ${Number(data.attendance?.total||0)?Math.round(Number(data.attendance.present||0)/Number(data.attendance.total)*100)+'%':'нет отметок'}</b></div><div><span>Зачет и дополнительные баллы за посещаемость</span><b>Не рассчитываются: нет утвержденного критерия и правил начисления</b></div><div><span>Практика ФКиС</span><b>${escapeHtml(data.student.practice||'не указано')}</b></div><div><span>Физическая подготовленность</span><b>${data.physical_tests.map(item=>`${escapeHtml(item.exercise)}: ${escapeHtml(item.result)} (${escapeHtml(item.grade||'норматив не загружен')})`).join('<br>')||'результатов пока нет'}</b></div><div><span>Сборная команда</span><b>${teams.length} · ${escapeHtml(teams.map(item=>item.team_name||'участник').join(', ')||'отсутствует')}</b></div><div><span>Спортивная секция</span><b>${sections.length} · ${escapeHtml(sections.map(item=>item.sport_type||'участник').join(', ')||'отсутствует')}</b></div><div><span>Участие спортсменом / волонтером</span><b>${events.filter(item=>item.participant_role==='Участник').length} / ${events.filter(item=>item.participant_role==='Волонтер').length}<details><summary>Список мероприятий</summary><ul>${eventDetails||'<li>Записей нет.</li>'}</ul></details></b></div><div class="full-detail"><span>Спортивные достижения</span><ul>${achievementDetails||'<li>Нет подтвержденных записей</li>'}</ul></div></div>`:'<p class="empty-state">Карточка появится после подтверждения заявки.</p>';
+  const eventDetails=events.map(item=>`<li>${escapeHtml(item.details||'Мероприятие')} · ${escapeHtml(item.event_status||'статус не указан')} · ${escapeHtml(item.participant_role||'роль не указана')} · ${escapeHtml(item.event_result||'результат не указан')} · ${escapeHtml(displayDate(item.record_date))}</li>`).join('');
+  $('#studentCardData').innerHTML=data.registered?`<div class="detail-grid"><div><span>ФИО</span><b>${escapeHtml(data.student.name)}</b></div><div><span>Дата рождения</span><b>${escapeHtml(displayDate(data.student.birth_date))}</b></div><div><span>Учебная группа</span><b>${escapeHtml(data.student.display_code||data.student.group_code)}</b></div><div><span>Группа здоровья</span><b>${escapeHtml(data.student.health||'не указана')}</b></div><div><span>ВФСК «ГТО»</span><b>${escapeHtml(gto.map(item=>item.distinction).filter(Boolean).join(', ')||'отсутствует')}</b></div><div><span>Спортивное звание (разряд)</span><b>${escapeHtml(ranks.map(item=>item.distinction).filter(Boolean).join(', ')||'отсутствует')}</b></div><div><span>Теория и методика ФКиС</span><b>${escapeHtml(data.student.theory||'не указано')} · дата: ${escapeHtml(displayDate(data.student.theory_date)||'не указана')}</b></div><div><span>Посещаемость ФКиС</span><b>${Number(data.attendance?.present||0)} из ${Number(data.attendance?.total||0)} занятий посещено · критерий процента и баллов не задан</b></div><div><span>Практика ФКиС</span><b>${escapeHtml(data.student.practice||'не указано')}</b></div><div><span>Физическая подготовленность</span><b>${data.physical_tests.map(item=>`${escapeHtml(item.test_category||'группа не указана')} · ${escapeHtml(item.exercise)}: ${escapeHtml(item.result)} (${escapeHtml(item.grade||'норматив не загружен')})`).join('<br>')||'результатов пока нет'}</b></div><div><span>Сборная команда</span><b>${teams.length} · ${escapeHtml(teams.map(item=>item.team_name||'участник').join(', ')||'отсутствует')} · процент и баллы не заданы</b></div><div><span>Спортивная секция</span><b>${sections.length} · ${escapeHtml(sections.map(item=>item.sport_type||'участник').join(', ')||'отсутствует')} · процент и баллы не заданы</b></div><div><span>Участие спортсменом / волонтером</span><b>${events.filter(item=>item.participant_role==='Участник').length} / ${events.filter(item=>item.participant_role==='Волонтер').length} · баллы не заданы<details><summary>Список мероприятий</summary><ul>${eventDetails||'<li>Записей нет.</li>'}</ul></details></b></div><div class="full-detail"><span>Спортивные достижения</span><ul>${achievementDetails||'<li>Нет подтвержденных записей</li>'}</ul></div></div>`:'<p class="empty-state">Карточка появится после подтверждения заявки.</p>';
+  if(data.registered){
+    const grid=$('#studentCardData .detail-grid');
+    const attendanceField=[...grid.children].find(node=>node.querySelector('span')?.textContent==='Посещаемость ФКиС');
+    if(attendanceField)attendanceField.querySelector('b').textContent=`${Number(data.attendance?.present||0)} из ${Number(data.attendance?.total||0)} отмеченных занятий · % от обязательного количества не задан`;
+    for(const [label,value] of [['Вид спорта до поступления',data.student.sport_before||'не указан'],['Элективная дисциплина ФКиС',data.student.elective||'не указана']]){
+      const field=document.createElement('div');field.innerHTML=`<span>${label}</span><b>${escapeHtml(value)}</b>`;grid.insertBefore(field,grid.querySelector('.full-detail'));
+    }
+    grid.querySelectorAll('div').forEach(field=>{if(field.querySelector('span')?.textContent==='Физическая подготовленность'){field.querySelector('b').innerHTML=data.physical_tests.map(item=>`${escapeHtml(item.test_category||'группа не указана')} · ${escapeHtml(item.exercise)}: ${escapeHtml(item.result)} (${escapeHtml(item.grade||'норматив не загружен')})`).join('<br>')||'результатов пока нет';}});
+  }
   $('#mySubmissionList').innerHTML=mine.submissions.map(item=>`<div class="approval-card"><b>${escapeHtml(item.status)}</b><span>${escapeHtml(displayDate(item.created_at))}</span>${item.review_note?`<p>${escapeHtml(item.review_note)}</p>`:''}</div>`).join('')||'<p class="empty-state">Отправленных заявок пока нет.</p>';
 }
 async function loadApprovals() {
   const {submissions}=await api('/api/pending-submissions');
   $('#approvalList').innerHTML=submissions.map(item=>{
     const p=item.payload||{};
-    return `<article class="panel approval-card"><p class="eyebrow">Заявка №${item.id} · ${escapeHtml(displayDate(item.created_at))}</p><h2>${escapeHtml(p.name||p.category||'Данные студента')}</h2><div class="detail-grid"><div><span>Электронная почта</span><b>${escapeHtml(item.email)}</b></div><div><span>Группа</span><b>${escapeHtml(p.group_code||'—')}</b></div><div><span>Факультет и курс</span><b>${escapeHtml(p.faculty||'—')} · ${escapeHtml(p.course||'—')}</b></div><div><span>Дата рождения</span><b>${escapeHtml(displayDate(p.birth_date))}</b></div><div><span>Группа здоровья</span><b>${escapeHtml(p.health||'—')}</b></div><div><span>Достижение</span><b>${escapeHtml(p.category||'—')} ${escapeHtml(p.distinction||'')}</b></div>${item.has_document?'<div><span>Документ</span><b>PDF приложен</b></div>':''}</div><label>Комментарий (обязателен при отклонении)<textarea id="review-note-${item.id}" rows="2"></textarea></label><div class="modal-actions"><button class="secondary-button" data-review="${item.id}" data-status="Отклонено">Вернуть студенту</button><button class="primary-button" data-review="${item.id}" data-status="Подтверждено">Подтвердить</button></div></article>`;
+    return `<article class="panel approval-card"><p class="eyebrow">Заявка №${item.id} · ${escapeHtml(displayDate(item.created_at))}</p><h2>${escapeHtml(p.name||p.category||'Данные студента')}</h2><div class="detail-grid"><div><span>Электронная почта</span><b>${escapeHtml(item.email)}</b></div><div><span>Группа</span><b>${escapeHtml(p.group_code||'—')}</b></div><div><span>Факультет и курс</span><b>${escapeHtml(p.faculty||'—')} · ${escapeHtml(p.course||'—')}</b></div><div><span>Дата рождения</span><b>${escapeHtml(displayDate(p.birth_date))}</b></div><div><span>Группа здоровья</span><b>${escapeHtml(p.health||'—')}</b></div><div><span>Достижение</span><b>${escapeHtml(p.category||'—')} ${escapeHtml(p.distinction||'')}</b></div>${p.event_status?`<div><span>Статус спортивного мероприятия</span><b>${escapeHtml(p.event_status)}</b></div>`:''}${item.has_document?'<div><span>Документ</span><b>PDF приложен</b></div>':''}</div><label>Комментарий (обязателен при отклонении)<textarea id="review-note-${item.id}" rows="2"></textarea></label><div class="modal-actions"><button class="secondary-button" data-review="${item.id}" data-status="Отклонено">Вернуть студенту</button><button class="primary-button" data-review="${item.id}" data-status="Подтверждено">Подтвердить</button></div></article>`;
   }).join('')||'<article class="panel empty-state">Новых заявок на проверку нет.</article>';
 }
 async function initializeApp() {
   ['achievementAgeGroup','editAchievementAgeGroup','submissionAgeGroup'].forEach(replaceGtoInput);
   addStudentDocumentInput();
+  addEventStatusFields();
   $('#submissionDate').value=todayLocal();
   $('#submissionBirth').addEventListener('change',()=>{const stage=gtoStageFromBirth($('#submissionBirth').value);if(stage)$('#submissionAgeGroup').value=stage;});
   $('#achievementStudent').addEventListener('change',()=>{const option=$('#achievementStudent').selectedOptions[0];$('#achievementAgeGroup').value=gtoStageFromBirth(option?.dataset.birth,$('#achievementDate').value)||'';});
@@ -293,7 +314,7 @@ function studentCard(id) {
   const gto=records.filter(item=>categoryKey(item.category)==='gto');
   const teams=records.filter(item=>categoryKey(item.category)==='team'&&item.status!=='Исключен');
   const sections=records.filter(item=>categoryKey(item.category)==='section'&&item.status!=='Исключен');
-  const eventList=role=>{const matches=events.filter(item=>item.participant_role===role);return `<details><summary>${matches.length} ${role==='Участник'?'участий спортсменом':'волонтерств'}</summary>${matches.length?matches.map(item=>`<p>${escapeHtml(item.details||'Мероприятие')} · ${escapeHtml(item.event_result||'результат не указан')} · ${escapeHtml(displayDate(item.record_date))}</p>`).join(''):'<p>Записей нет.</p>'}</details>`;};
+  const eventList=role=>{const matches=events.filter(item=>item.participant_role===role);return `<details><summary>${matches.length} ${role==='Участник'?'участий спортсменом':'волонтерств'}</summary>${matches.length?matches.map(item=>`<p>${escapeHtml(item.details||'Мероприятие')} · ${escapeHtml(item.event_status||'статус не указан')} · ${escapeHtml(item.event_result||'результат не указан')} · ${escapeHtml(displayDate(item.record_date))}</p>`).join(''):'<p>Записей нет.</p>'}</details>`;};
   $('#modalStudentName').textContent = student.name;
   $('#studentDetails').innerHTML = `<div class="detail-grid">
     <div><span>Учебная группа (ИСУ)</span><b>${escapeHtml(window.groupDisplayName?.(activeGroup) || activeGroup)}</b></div>
@@ -302,13 +323,15 @@ function studentCard(id) {
     <div><span>Дата рождения</span><b>${escapeHtml(displayDate(student.birth_date) === '—' ? '' : displayDate(student.birth_date)) || 'не получена из выгрузки'}</b></div>
     <div><span>Группа здоровья</span><b>${escapeHtml(student.health || 'не указана')}</b></div>
     <div><span>ТиМ ФКиС</span><b>${escapeHtml(student.theory || 'не указано')}${student.theory_date ? ` · ${escapeHtml(displayDate(student.theory_date))}` : ''}</b></div>
-    <div><span>Посещаемость</span><b>${Number(student.attendance_records_count||0)} отметок · ${Number(student.attendance)>0 ? `${student.attendance}%` : 'процент пока не рассчитан'}</b></div>
+    <div><span>Посещаемость ФКиС</span><b>${Number(student.attendance_present_count||0)} из ${Number(student.attendance_records_count||0)} занятий посещено · процент от обязательного количества и дополнительные баллы не заданы</b></div>
+    <div><span>Вид спорта до поступления</span><b>${escapeHtml(student.sport_before||'не указан')}</b></div>
+    <div><span>Элективная дисциплина ФКиС</span><b>${escapeHtml(student.elective||'не указана')}</b></div>
     <div><span>Практика ФКиС</span><b>${escapeHtml(student.practice || 'не указано')}</b></div>
     <div><span>ВФСК «ГТО»</span><b>${escapeHtml(gto.map(item=>item.distinction||item.category).join(', ')||'отсутствует')}</b></div>
     <div><span>Спортивное звание (разряд)</span><b>${escapeHtml(rank.map(item=>item.distinction).filter(Boolean).join(', ')||'отсутствует')}</b></div>
-    <div><span>Сборная команда</span><b>${teams.length} · ${escapeHtml(teams.map(item=>item.team_name||'участник').join(', ')||'отсутствует')}</b></div>
-    <div><span>Спортивная секция</span><b>${sections.length} · ${escapeHtml(sections.map(item=>item.sport_type||'участник').join(', ')||'отсутствует')}</b></div>
-    <div><span>Физическая подготовленность</span><b>${physical.length ? physical.map(item=>`${escapeHtml(item.exercise)}: ${escapeHtml(item.result)} (${escapeHtml(item.grade||'оценка по нормативу не загружена')})`).join('<br>') : 'результатов пока нет'}</b></div>
+    <div><span>Сборная команда</span><b>${teams.length} · ${escapeHtml(teams.map(item=>item.team_name||'участник').join(', ')||'отсутствует')} · процент и баллы не заданы</b></div>
+    <div><span>Спортивная секция</span><b>${sections.length} · ${escapeHtml(sections.map(item=>item.sport_type||'участник').join(', ')||'отсутствует')} · процент и баллы не заданы</b></div>
+    <div><span>Физическая подготовленность</span><b>${physical.length ? physical.map(item=>`${escapeHtml(item.test_category||'группа не указана')} · ${escapeHtml(item.exercise)}: ${escapeHtml(item.result)} (${escapeHtml(item.grade||'оценка по нормативу не загружена')})`).join('<br>') : 'результатов пока нет'}</b></div>
     <div><span>Зачет и дополнительные баллы за посещаемость</span><b>Не рассчитываются: нет утвержденного критерия и правил начисления</b></div>
     <div><span>Спортивные мероприятия</span><b>${eventList('Участник')}${eventList('Волонтер')}</b></div>
     <div><span>Спортивные достижения</span><b>${records.length ? records.map(item=>`${escapeHtml(item.category)}: ${escapeHtml(item.details||item.distinction||item.team_name||item.sport_type||'запись')}`).join('<br>') : 'нет подтвержденных записей'}</b></div>
@@ -320,6 +343,8 @@ function fillCategoryFields(prefix, category) {
   document.querySelectorAll(prefix ? '.edit-achievement-field' : '.achievement-field').forEach(field => {
     field.hidden = !field.dataset.for.split(/\s+/).includes(key);
   });
+  const eventStatus = $(`#${prefix ? 'editAchievementEventStatus' : 'achievementEventStatus'}`);
+  if (eventStatus) eventStatus.required = key === 'event';
 }
 function formValue(prefix, suffix) { return $(`#${prefix}${suffix}`).value.trim(); }
 function achievementPayload(prefix) {
@@ -334,6 +359,7 @@ function achievementPayload(prefix) {
   const role = formValue(prefix, 'Role');
   const eventName = formValue(prefix, 'Event');
   const eventResult = formValue(prefix, 'Result');
+  const eventStatus = formValue(prefix, 'EventStatus');
   const dateValue = formValue(prefix, 'Date') || todayLocal();
   if (!studentId) throw new Error('Выберите студента из списка.');
   if (key === 'rank' && (!sportType || !distinction)) throw new Error('Укажите вид спорта и спортивное звание или разряд.');
@@ -341,6 +367,7 @@ function achievementPayload(prefix) {
   if (key === 'team' && !teamName) throw new Error('Укажите название сборной команды.');
   if (key === 'section' && !section) throw new Error('Укажите название спортивной секции.');
   if (key === 'event' && !eventName) throw new Error('Укажите наименование спортивного мероприятия.');
+  if (key === 'event' && !eventStatus) throw new Error('Укажите статус спортивного мероприятия.');
   const file = $(`#${prefix}Document`).files[0];
   if (file && (file.type !== 'application/pdf' || file.size > 10*1024*1024)) throw new Error('Прикрепите PDF-файл размером до 10 МБ.');
   return (async () => {
@@ -353,7 +380,7 @@ function achievementPayload(prefix) {
       student_id:studentId, category, details:key==='event'?eventName:'', record_date:dateValue,
       status:formValue(prefix,'Status'), sport_type:key==='rank'?sportType:key==='section'?section:'', distinction:key==='rank'||key==='gto'?distinction:'', age_group:key==='gto'?ageGroup:'',
       order_basis:formValue(prefix,'Order'), participant_role:key==='event'?role:'',
-      event_result:key==='event'?eventResult:'', note:key==='event'?formValue(prefix,'Note'):'', team_name:key==='team'?teamName:'',
+      event_result:key==='event'?eventResult:'', event_status:key==='event'?eventStatus:'', note:key==='event'?formValue(prefix,'Note'):'', team_name:key==='team'?teamName:'',
       document_name:file?.name || '', document_base64:documentBase64,
       remove_document:prefix==='editAchievement' && $('#removeAchievementDocument').checked
     };
@@ -379,6 +406,7 @@ function editAchievement(id) {
   $('#editAchievementRole').value = item.participant_role || 'Участник';
   $('#editAchievementEvent').value = item.details || '';
   $('#editAchievementResult').value = item.event_result || '';
+  $('#editAchievementEventStatus').value = item.event_status || '';
   $('#editAchievementDate').value = isoDate(item.record_date) || todayLocal();
   $('#editAchievementOrder').value = item.order_basis || '';
   $('#editAchievementStatus').value = item.status || 'Подтверждено';
@@ -457,7 +485,7 @@ document.addEventListener('click', async event => {
   if (achievementButton) editAchievement(achievementButton.dataset.achievement);
   if (physicalButton) {
     const item=physicalTests.find(record=>record.id===Number(physicalButton.dataset.physical));
-    if(item){$('#physicalStudent').value=item.student_id;$('#physicalDate').value=isoDate(item.record_date)||item.record_date;$('#physicalExercise').value=item.exercise;$('#physicalResult').value=item.result;$('#physicalExercise').focus();scrollTo({top:0,behavior:'smooth'});}
+    if(item){$('#physicalStudent').value=item.student_id;$('#physicalDate').value=isoDate(item.record_date)||item.record_date;$('#physicalCategory').value=item.test_category||'';$('#physicalExercise').value=item.exercise;$('#physicalResult').value=item.result;$('#physicalExercise').focus();scrollTo({top:0,behavior:'smooth'});}
   }
   if (filter) {
     studentFilter=filter.dataset.studentFilter;
@@ -516,23 +544,23 @@ $('#saveAttendance').onclick=async()=>{
 $('#physicalDate').value=todayLocal();
 $('#lessonDate').value=todayLocal();
 $('#savePhysical').onclick=async()=>{
-  const exercise=$('#physicalExercise').value.trim(),result=$('#physicalResult').value.trim(),studentId=Number($('#physicalStudent').value);
-  if(!studentId||!exercise||!result)return toast('Выберите студента, упражнение и укажите результат.');
-  try { await api('/api/physical-tests','POST',{student_id:studentId,record_date:$('#physicalDate').value,exercise,result}); $('#physicalExercise').value=''; $('#physicalResult').value=''; await load(); toast('Результат физической подготовленности сохранен.'); }
+  const exercise=$('#physicalExercise').value.trim(),result=$('#physicalResult').value.trim(),studentId=Number($('#physicalStudent').value),test_category=$('#physicalCategory').value;
+  if(!studentId||!test_category||!exercise||!result)return toast('Выберите студента, группу испытания и укажите упражнение с результатом.');
+  try { await api('/api/physical-tests','POST',{student_id:studentId,record_date:$('#physicalDate').value,test_category,exercise,result}); $('#physicalCategory').value=''; $('#physicalExercise').value=''; $('#physicalResult').value=''; await load(); toast('Результат физической подготовленности сохранен.'); }
   catch(error) { toast(error.message); }
 };
 document.querySelectorAll('.submission-field').forEach(field=>field.hidden=true);
-$('#submissionCategory').addEventListener('change',event=>{const key=categoryKey(event.target.value);document.querySelectorAll('.submission-field').forEach(field=>field.hidden=!field.dataset.for.split(/\s+/).includes(key));});
+$('#submissionCategory').addEventListener('change',event=>{const key=categoryKey(event.target.value);document.querySelectorAll('.submission-field').forEach(field=>field.hidden=!field.dataset.for.split(/\s+/).includes(key));$('#submissionEventStatus').required=key==='event';});
 $('#submitStudentData').onclick=async()=>{
   const category=$('#submissionCategory').value;
   if(category&&!studentData?.registered)return toast('Сначала дождитесь подтверждения профиля; достижение можно подать вместе с первичной регистрацией.');
-  const data=category?{category,sport_type:$('#submissionSport').value,distinction:$('#submissionDistinction').value,age_group:$('#submissionAgeGroup').value,birth_date:studentData?.student?.birth_date,team_name:$('#submissionTeam').value,section:$('#submissionSection').value,event_name:$('#submissionEvent').value,participant_role:$('#submissionRole').value,event_result:$('#submissionResult').value,record_date:$('#submissionDate').value,order_basis:$('#submissionOrder').value}:{name:$('#submissionName').value.trim(),birth_date:$('#submissionBirth').value,faculty:$('#submissionFaculty').value.trim(),course:Number($('#submissionCourse').value),group_code:$('#submissionGroup').value,health:$('#submissionHealth').value,sport_before:$('#submissionSportBefore').value.trim(),elective:$('#submissionElective').value.trim(),personal_data_consent:$('#submissionConsent').checked};
+  const data=category?{category,sport_type:$('#submissionSport').value,distinction:$('#submissionDistinction').value,age_group:$('#submissionAgeGroup').value,birth_date:studentData?.student?.birth_date,team_name:$('#submissionTeam').value,section:$('#submissionSection').value,event_name:$('#submissionEvent').value,event_status:$('#submissionEventStatus').value,participant_role:$('#submissionRole').value,event_result:$('#submissionResult').value,record_date:$('#submissionDate').value,order_basis:$('#submissionOrder').value}:{name:$('#submissionName').value.trim(),birth_date:$('#submissionBirth').value,faculty:$('#submissionFaculty').value.trim(),course:Number($('#submissionCourse').value),group_code:$('#submissionGroup').value,health:$('#submissionHealth').value,sport_before:$('#submissionSportBefore').value.trim(),elective:$('#submissionElective').value.trim(),personal_data_consent:$('#submissionConsent').checked};
   const file=$('#submissionDocument').files[0];
   if(file){if(file.type!=='application/pdf'||file.size>10*1024*1024)return toast('Подтверждающий документ должен быть PDF до 10 МБ.');const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Не удалось прочитать PDF.'));reader.readAsDataURL(file);});data.document_name=file.name;data.document_base64=String(dataUrl).split(',')[1]||'';}
   try{await api('/api/student-submissions','POST',data);$('#submissionCategory').value='';document.querySelectorAll('.submission-field').forEach(field=>field.hidden=true);await loadStudentPortal();toast('Данные отправлены ответственному на проверку.');}catch(error){toast(error.message);}
 };
 $('#openAchievement').onclick=()=>{
-  ['achievementSport','achievementDistinction','achievementAgeGroup','achievementTeam','achievementSection','achievementEvent','achievementResult','achievementOrder','achievementNote'].forEach(id=>$('#'+id).value='');
+  ['achievementSport','achievementDistinction','achievementAgeGroup','achievementTeam','achievementSection','achievementEvent','achievementResult','achievementEventStatus','achievementOrder','achievementNote'].forEach(id=>$('#'+id).value='');
   $('#achievementStatus').value='Действующий';
   $('#achievementRole').value='Участник';
   $('#achievementStudent').selectedIndex=0;

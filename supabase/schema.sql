@@ -57,6 +57,7 @@ CREATE TABLE public.achievements (
   order_basis text,
   participant_role text,
   event_result text,
+  event_status text,
   note text,
   document_name text,
   document_data bytea,
@@ -68,6 +69,7 @@ CREATE TABLE public.physical_tests (
   student_id bigint NOT NULL REFERENCES public.students(id),
   record_date date NOT NULL,
   exercise text NOT NULL,
+  test_category text,
   result text NOT NULL,
   grade text,
   CONSTRAINT physical_test_unique UNIQUE(student_id, record_date, exercise)
