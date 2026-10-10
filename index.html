@@ -6,7 +6,7 @@
   <meta name="description" content="Учет физической культуры и спорта студентов СПбГМТУ" />
   <title>ФКиС - СПбГМТУ</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=20261008-spec-alignment" />
+  <link rel="stylesheet" href="styles.css?v=20261010-workspace" />
 </head>
 <body>
   <header class="topbar">
@@ -21,6 +21,7 @@
     <aside class="sidebar">
       <p class="section-label">ФКиС</p>
       <nav aria-label="Основная навигация">
+        <button class="nav-item" data-view="roleHome"><span>⌂</span> Рабочее место</button>
         <button class="nav-item active" data-view="dashboard"><span>▦</span> Обзор</button>
         <button class="nav-item" data-view="students"><span>♙</span> Студенты</button>
         <button class="nav-item" data-view="attendance"><span>✓</span> Посещаемость</button>
@@ -35,10 +36,10 @@
     </aside>
 
     <main>
-      <div class="group-picker content-group-picker" id="groupPicker"><button class="group-picker-button" id="groupPickerButton" aria-expanded="false"><span class="picker-dot"></span><span id="topGroupName">12509-05</span><span>⌄</span></button><div class="group-menu" id="groupMenu" hidden><label class="group-search"><span>⌕</span><input id="groupSearch" placeholder="Найти группу, факультет или направление" autocomplete="off" /></label><div class="group-cascade"><section class="group-cascade-column"><h3>Факультет</h3><div id="facultyOptions"></div></section><section class="group-cascade-column"><h3>Направление</h3><div id="directionOptions"></div></section><section class="group-cascade-column course-column"><h3>Курс</h3><div id="courseOptions"></div></section><section class="group-cascade-column group-column"><h3>Группа</h3><div id="groupOptions"></div></section></div><div class="group-picker-foot">Структура групп загружена из расписания СПбГМТУ</div></div></div>
+      <div class="group-picker-row" id="groupPickerRow"><div class="group-picker content-group-picker" id="groupPicker"><button class="group-picker-button" id="groupPickerButton" aria-expanded="false"><span class="picker-dot"></span><span id="topGroupName">12509-05</span><span>⌄</span></button><div class="group-menu" id="groupMenu" hidden><label class="group-search"><span>⌕</span><input id="groupSearch" placeholder="Найти группу, факультет или направление" autocomplete="off" /></label><div class="group-cascade"><section class="group-cascade-column"><h3>Факультет</h3><div id="facultyOptions"></div></section><section class="group-cascade-column"><h3>Направление</h3><div id="directionOptions"></div></section><section class="group-cascade-column course-column"><h3>Курс</h3><div id="courseOptions"></div></section><section class="group-cascade-column group-column"><h3>Группа</h3><div id="groupOptions"></div></section></div><div class="group-picker-foot">Структура групп загружена из расписания СПбГМТУ</div></div></div></div>
       <section id="roleHome" class="view active-view">
-        <div class="breadcrumbs">ФКиС <span>/</span> Рабочее место</div><div class="page-heading"><div><h1 id="roleHomeTitle">Рабочее место</h1><p>Выберите ввод данных или просмотр результатов</p></div></div>
-        <div class="role-home-tabs"><button class="filter active" data-home-mode="input">ВВОД ДАННЫХ</button><button class="filter" data-home-mode="results">РЕЗУЛЬТАТЫ</button></div><div class="role-home-actions" id="roleHomeActions"></div>
+        <div class="breadcrumbs">ФКиС <span>/</span> Рабочее место</div><div class="page-heading"><div><h1 id="roleHomeTitle">Рабочее место</h1><p>Все доступные разделы для вашей роли</p></div></div>
+        <div class="role-home-actions" id="roleHomeActions"></div>
       </section>
       <section id="dashboard" class="view">
         <div class="breadcrumbs">Главная <span>/</span> Учет ФКиС</div>
@@ -108,8 +109,8 @@
   <div class="modal-backdrop" id="addStudentModal" hidden><div class="modal"><button class="close-modal" data-close="addStudentModal">×</button><p class="eyebrow">Новая запись</p><h2>Добавить студента</h2><label>Фамилия, имя, отчество<input id="newStudentName" placeholder="Иванов Иван Иванович" /></label><label>Группа здоровья<select id="newStudentHealth"><option>не указана</option><option>основная</option><option>подготовительная</option><option>специальная</option></select></label><div class="modal-actions"><button class="secondary-button" data-close="addStudentModal">Отмена</button><button class="primary-button" id="saveStudent">Добавить</button></div></div></div>
   <div class="tour-mask" id="tourMask" hidden aria-live="polite"><div class="tour-spotlight" id="tourSpotlight"></div><div class="tour-card"><span class="tour-count" id="tourCount">1 из 4</span><button class="close-modal" id="closeTour" aria-label="Закрыть обучение">×</button><h2 id="tourTitle"></h2><p id="tourText"></p><div class="tour-actions"><button class="link-button" id="tourSkip">Пропустить</button><button class="primary-button" id="tourNext">Далее</button></div></div></div>
   <div class="toast" id="toast" role="status"></div>
-  <script src="app.js?v=20261008-spec-alignment"></script>
-  <script src="group-picker.js?v=20260923-group-hierarchy4"></script>
+  <script src="app.js?v=20261010-workspace"></script>
+  <script src="group-picker.js?v=20261010-workspace"></script>
   <script src="achievement-filters.js?v=20260923-categories"></script>
 </body>
 </html>

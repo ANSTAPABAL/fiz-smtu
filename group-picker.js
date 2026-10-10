@@ -54,12 +54,6 @@ function closeGroups() {
   picker('#groupMenu').hidden=true;
   picker('#groupPickerButton').setAttribute('aria-expanded','false');
 }
-function placeGroupPicker() {
-  const actions=document.querySelector('.active-view .heading-actions');
-  const groupPicker=picker('#groupPicker');
-  if(actions && groupPicker.parentElement!==actions) actions.prepend(groupPicker);
-}
-window.placeGroupPicker=placeGroupPicker;
 picker('#groupPickerButton').onclick=()=>picker('#groupMenu').hidden?openGroups():closeGroups();
 picker('#groupSearch').oninput=event=>drawGroups(event.target.value);
 document.addEventListener('click',event=>{
@@ -73,7 +67,6 @@ document.addEventListener('click',event=>{
   else if(choice){window.setActiveGroup(choice.dataset.group);closeGroups();}
   else if(!event.target.closest('.group-picker'))closeGroups();
 });
-placeGroupPicker();
 fetch('/api/groups').then(response=>response.json()).then(data=>{
   availableGroups=data.groups||[];
   if(!availableGroups.some(group=>group.group_code===activeGroup) && availableGroups.length){

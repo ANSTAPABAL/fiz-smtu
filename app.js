@@ -11,7 +11,6 @@ let studentFilter = 'all';
 let selectedRole = 'Преподаватель кафедры ФВ';
 let appSession = null;
 let studentData = null;
-let homeMode = 'input';
 const GTO_STAGE_LABELS=['I ступень (6–7 лет)','II ступень (8–9 лет)','III ступень (10–11 лет)','IV ступень (12–13 лет)','V ступень (14–15 лет)','VI ступень (16–17 лет)','VII ступень (18–19 лет)','VIII ступень (20–24 года)','IX ступень (25–29 лет)','X ступень (30–34 года)','XI ступень (35–39 лет)','XII ступень (40–44 года)','XIII ступень (45–49 лет)','XIV ступень (50–54 года)','XV ступень (55–59 лет)','XVI ступень (60–64 года)','XVII ступень (65–69 лет)','XVIII ступень (70 лет и старше)'];
 const $ = selector => document.querySelector(selector);
 const initials = name => name.split(/\s+/).map(part => part[0]).join('').slice(0, 2);
@@ -105,16 +104,17 @@ function showRole() {
   $('#roleButton').setAttribute('aria-expanded', 'false');
   localStorage.setItem('fkis-role', selectedRole);
   const access={
-    "Преподаватель кафедры ФВ":{input:[["attendance","Посещаемость занятий"],["physical","Физическая подготовленность"]],results:[["students","Карточка студента"],["groupCard","Карточка группы"],["reports","Сводные данные"]],nav:["dashboard","students","attendance","physical","groupCard","reports"]},
-    "Сотрудник ССК «Армада»":{input:[["achievements","Спортивный разряд, ГТО, сборная, секция и мероприятия"]],results:[["students","Карточка студента"],["groupCard","Карточка группы"],["reports","Сводные данные"]],nav:["students","achievements","groupCard","reports"]},
-    "Студент":{input:[["studentPortal","Подать или обновить данные"]],results:[["studentPortal","Карточка студента и решения по заявкам"]],nav:["studentPortal"]},
-    "Ответственный исполнитель кафедры ФВ":{input:[["approvals","Проверка и подтверждение данных студентов"],["health","Группа здоровья"]],results:[["reports","Сводные данные"]],nav:["approvals","health","reports"]}
+    "Преподаватель кафедры ФВ":{actions:[["attendance","Посещаемость занятий"],["physical","Физическая подготовленность"],["students","Карточка студента"],["groupCard","Карточка группы"],["reports","Сводные данные"]],nav:["dashboard","students","attendance","physical","groupCard","reports"]},
+    "Сотрудник ССК «Армада»":{actions:[["achievements","Спортивные разряды, ГТО и мероприятия"],["students","Карточка студента"],["groupCard","Карточка группы"],["reports","Сводные данные"]],nav:["students","achievements","groupCard","reports"]},
+    "Студент":{actions:[["studentPortal","Личный кабинет студента"]],nav:["studentPortal"]},
+    "Ответственный исполнитель кафедры ФВ":{actions:[["approvals","Проверка заявок студентов"],["health","Группы здоровья"],["reports","Сводные данные"]],nav:["approvals","health","reports"]}
   }[selectedRole];
-  document.querySelectorAll('.nav-item').forEach(button=>button.hidden=!access.nav.includes(button.dataset.view));
+  document.querySelectorAll('.nav-item').forEach(button=>button.hidden=button.dataset.view!=='roleHome'&&!access.nav.includes(button.dataset.view));
   $('#groupPicker').hidden=selectedRole==='Студент';
+  $('#groupPickerRow').hidden=selectedRole==='Студент';
   $('#rolePicker').hidden=!!appSession?.auth_enabled;
   $('#roleHomeTitle').textContent=selectedRole;
-  $('#roleHomeActions').innerHTML=(access[homeMode]||[]).map(([view,label])=>`<button class="role-action-card" data-go="${view}"><span>${escapeHtml(label)}</span><b>Открыть →</b></button>`).join('');
+  $('#roleHomeActions').innerHTML=access.actions.map(([view,label])=>`<button class="role-action-card" data-go="${view}"><span>${escapeHtml(label)}</span><b>Открыть раздел <span aria-hidden="true">→</span></b></button>`).join('');
   if ($('#addStudent')) $('#addStudent').hidden=selectedRole!=="Ответственный исполнитель кафедры ФВ";
 }
 function render() {
@@ -300,7 +300,6 @@ function go(view) {
   if (view === 'reports') renderConsolidated().catch(error=>toast(error.message));
   if (view === 'approvals') loadApprovals().catch(error=>toast(error.message));
   if (view === 'studentPortal') loadStudentPortal().catch(error=>toast(error.message));
-  window.placeGroupPicker?.();
   scrollTo({top:0,behavior:'smooth'});
 }
 function studentCard(id) {
@@ -476,7 +475,6 @@ document.addEventListener('click', async event => {
   const attendanceButton = event.target.closest('[data-set]');
   const roleChoice = event.target.closest('[data-role]');
   const reviewButton = event.target.closest('[data-review]');
-  const homeModeButton = event.target.closest('[data-home-mode]');
   const healthSave = event.target.closest('[data-save-health]');
   if (nav) go(nav.dataset.view);
   if (goButton) go(goButton.dataset.go);
@@ -501,7 +499,6 @@ document.addEventListener('click', async event => {
     try { await api('/api/demo-role','POST',{role:roleChoice.dataset.role}); appSession=await api('/api/session'); selectedRole=appSession.role; showRole(); go('roleHome'); if(selectedRole==='Студент')await loadStudentPortal();else await load(); }
     catch(error){toast(error.message);}
   }
-  if (homeModeButton) { homeMode=homeModeButton.dataset.homeMode; document.querySelectorAll('[data-home-mode]').forEach(button=>button.classList.toggle('active',button===homeModeButton)); showRole(); }
   if (reviewButton) {
     const status=reviewButton.dataset.status,note=$(`#review-note-${reviewButton.dataset.review}`).value.trim();
     try { const result=await api(`/api/review-submission/${reviewButton.dataset.review}`,'POST',{status,note}); await loadApprovals(); toast(result.email_sent?'Решение сохранено, уведомление отправлено по почте.':'Решение сохранено; студент увидит его в личном кабинете.'); }
