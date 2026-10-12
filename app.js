@@ -339,6 +339,8 @@ function studentCard(id) {
 }
 function fillCategoryFields(prefix, category) {
   const key = categoryKey(category);
+  const formPrefix = prefix ? 'editAchievement' : 'achievement';
+  filterAchievementChoices(key, $(`#${formPrefix}Distinction`), $(`#${formPrefix}Status`));
   document.querySelectorAll(prefix ? '.edit-achievement-field' : '.achievement-field').forEach(field => {
     field.hidden = !field.dataset.for.split(/\s+/).includes(key);
   });
@@ -547,7 +549,7 @@ $('#savePhysical').onclick=async()=>{
   catch(error) { toast(error.message); }
 };
 document.querySelectorAll('.submission-field').forEach(field=>field.hidden=true);
-$('#submissionCategory').addEventListener('change',event=>{const key=categoryKey(event.target.value);document.querySelectorAll('.submission-field').forEach(field=>field.hidden=!field.dataset.for.split(/\s+/).includes(key));$('#submissionEventStatus').required=key==='event';});
+$('#submissionCategory').addEventListener('change',event=>{const key=categoryKey(event.target.value);filterAchievementChoices(key,$('#submissionDistinction'));document.querySelectorAll('.submission-field').forEach(field=>field.hidden=!field.dataset.for.split(/\s+/).includes(key));$('#submissionEventStatus').required=key==='event';});
 $('#submitStudentData').onclick=async()=>{
   const category=$('#submissionCategory').value;
   if(category&&!studentData?.registered)return toast('Сначала дождитесь подтверждения профиля; достижение можно подать вместе с первичной регистрацией.');
@@ -618,4 +620,8 @@ addEventListener('change',event=>{
   if(grade){const student=students.find(item=>item.id===Number(grade.dataset.gradeStudent));if(student)student.grade=grade.value;}
 });
 addEventListener('resize',()=>!$('#tourMask').hidden&&placeTourSpotlight());
+for (const id of ['saveAchievement','saveAchievementEdit','saveStudent','saveStudentEdit','savePhysical','saveAttendance','submitStudentData','saveGroupOrganizer']) {
+  const button = $('#'+id), action = button.onclick;
+  button.onclick = event => runFormAction(button, () => action(event)).catch(error => toast(error.message));
+}
 initializeApp().catch(error=>toast(error.message || 'Не удалось открыть базу данных.'));

@@ -358,6 +358,14 @@ def password_digest(password, salt=None):
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 310_000).hex()
     return salt, digest
 
+def validate_achievement_choice(data):
+    category = data.get("category")
+    distinction = str(data.get("distinction") or "").strip()
+    if category == "ВФСК «ГТО»" and distinction not in ("Золотой знак", "Серебряный знак", "Бронзовый знак"):
+        raise ValueError("Выберите золотой, серебряный или бронзовый знак ГТО.")
+    if category == "Спортивное звание (разряд)" and (not distinction or "знак" in distinction.lower()):
+        raise ValueError("Выберите спортивное звание или разряд, а не знак ГТО.")
+
 def notify_student(email, subject, text):
     host = os.environ.get("SMTP_HOST", "").strip()
     if not host or not os.environ.get("SMTP_FROM", "").strip():
@@ -445,7 +453,7 @@ class App(SimpleHTTPRequestHandler):
             self.path = "/login.html"
             return super().do_GET()
         if AUTH_ENABLED and not self.authenticated():
-            public_assets = {"/styles.css", "/app.js", "/group-picker.js", "/achievement-filters.js", "/favicon.svg", "/smtu-logo.svg"}
+            public_assets = {"/styles.css", "/app.js", "/form-actions.js", "/group-picker.js", "/achievement-filters.js", "/favicon.svg", "/smtu-logo.svg"}
             if path in public_assets:
                 return super().do_GET()
             if path in ("/", "/index.html"):
@@ -643,6 +651,7 @@ class App(SimpleHTTPRequestHandler):
                 con.commit(); self.send_json({"ok":True}); return
             if path.startswith("/api/achievements/"):
                 if self.role_required("Сотрудник ССК «Армада»"): return
+                validate_achievement_choice(data)
                 achievement_id=int(path.rsplit("/",1)[1])
                 if data["category"] not in ACHIEVEMENT_CATEGORIES and data["category"]!="Сборная команда (секция)": raise ValueError("Выберите раздел спортивного учета.")
                 required={"Спортивное звание (разряд)":("sport_type","distinction"),"ВФСК «ГТО»":("age_group","distinction"),"Сборная команда":("team_name",),"Спортивная секция":("sport_type",),"Спортивное мероприятие":("details","participant_role","event_status"),"Сборная команда (секция)":("team_name",)}[data["category"]]
@@ -681,6 +690,7 @@ class App(SimpleHTTPRequestHandler):
                 con.execute("INSERT INTO student_accounts(email,password_salt,password_hash) VALUES(?,?,?)",(email,salt,digest))
                 profile={key:data.get(key) for key in ("name","birth_date","group_code","faculty","course","health","sport_before","elective","personal_data_consent","isu_id")}
                 if data.get("category"):
+                    validate_achievement_choice(data)
                     profile.update({key:data.get(key) for key in ("category","sport_type","distinction","age_group","team_name","section","event_name","event_status","participant_role","event_result","record_date","order_basis","document_name","document_base64")})
                     if data["category"] not in ACHIEVEMENT_CATEGORIES: raise ValueError("Неизвестный раздел достижения.")
                     required={"Спортивное звание (разряд)":("sport_type","distinction"),"ВФСК «ГТО»":("age_group","distinction"),"Сборная команда":("team_name",),"Спортивная секция":("section",),"Спортивное мероприятие":("event_name","participant_role","event_status")}[data["category"]]
@@ -722,6 +732,7 @@ class App(SimpleHTTPRequestHandler):
                 if not data.get("category") and not con.execute("SELECT 1 FROM academic_groups WHERE group_code=?",(data.get("group_code"),)).fetchone(): raise ValueError("Выберите учебную группу.")
                 if data.get("category") and data["category"] not in ACHIEVEMENT_CATEGORIES: raise ValueError("Выберите раздел спортивного учета.")
                 if data.get("category"):
+                    validate_achievement_choice(data)
                     required={"Спортивное звание (разряд)":("sport_type","distinction"),"ВФСК «ГТО»":("birth_date","age_group","distinction"),"Сборная команда":("team_name",),"Спортивная секция":("section",),"Спортивное мероприятие":("event_name","participant_role")}[data["category"]]
                     if data["category"] == "Спортивное мероприятие": required += ("event_status",)
                     if any(not str(data.get(field,"")).strip() for field in required): raise ValueError("Заполните обязательные поля выбранного раздела.")
@@ -781,6 +792,7 @@ class App(SimpleHTTPRequestHandler):
                 con.commit(); self.send_json({"ok":True}); return
             if path=="/api/achievements":
                 if self.role_required("Сотрудник ССК «Армада»"): return
+                validate_achievement_choice(data)
                 if data["category"] not in ACHIEVEMENT_CATEGORIES: raise ValueError("Выберите раздел спортивного учета.")
                 required={"Спортивное звание (разряд)":("sport_type","distinction"),"ВФСК «ГТО»":("age_group","distinction"),"Сборная команда":("team_name",),"Спортивная секция":("sport_type",),"Спортивное мероприятие":("details","participant_role","event_status")}[data["category"]]
                 if any(not str(data.get(field,"")).strip() for field in required): raise ValueError("Заполните обязательные поля выбранного раздела.")
