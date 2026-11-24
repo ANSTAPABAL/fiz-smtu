@@ -366,6 +366,31 @@ def validate_achievement_choice(data):
     if category == "Спортивное звание (разряд)" and (not distinction or "знак" in distinction.lower()):
         raise ValueError("Выберите спортивное звание или разряд, а не знак ГТО.")
 
+PRIOR_RANKS = ("б/р", "Третий разряд", "Второй разряд", "Первый разряд", "Кандидат в мастера спорта", "Мастер спорта")
+GTO_BADGES = ("Золотой знак", "Серебряный знак", "Бронзовый знак")
+
+def validate_student_profile(profile):
+    semester = str(profile.get("elective_semester") or "")
+    if (profile.get("elective") or semester) and (not profile.get("elective") or semester not in tuple(map(str, range(2, 13)))):
+        raise ValueError("Укажите элективную дисциплину и семестр со 2-го по 12-й.")
+    for field, choices in (("prior_rank", PRIOR_RANKS), ("prior_gto", GTO_BADGES)):
+        if profile.get(field) and profile[field] not in choices:
+            raise ValueError("Выберите спортивный разряд или знак ГТО из списка.")
+    decode_pdf(profile.get("health_document_base64"))
+
+def student_profile_history(email):
+    profiles = []
+    for item in rows("SELECT id,payload,status,review_note FROM student_submissions WHERE email=? ORDER BY id DESC", (email,)):
+        payload = json.loads(item["payload"])
+        if payload.get("kind") != "profile":
+            continue
+        item["has_health_document"] = bool(payload.get("health_document_base64"))
+        for field in ("document_base64", "health_document_base64"):
+            payload.pop(field, None)
+        item["payload"] = payload
+        profiles.append(item)
+    return profiles
+
 def notify_student(email, subject, text):
     host = os.environ.get("SMTP_HOST", "").strip()
     if not host or not os.environ.get("SMTP_FROM", "").strip():
@@ -464,20 +489,24 @@ class App(SimpleHTTPRequestHandler):
         if path == "/api/student-data":
             if self.role_required("Студент"): return
             session = self.session_info()
+            profiles = student_profile_history(session["username"])
+            latest = next(iter(profiles), None)
             if not session["student_id"]:
-                pending = rows("SELECT id,payload,status,review_note,created_at FROM student_submissions WHERE email=? ORDER BY id DESC LIMIT 1",(session["username"],))
-                if pending:
-                    try: pending[0]["payload"]=json.loads(pending[0]["payload"])
-                    except (ValueError,TypeError): pending[0]["payload"]={}
-                    pending[0]["payload"].pop("document_base64",None)
-                self.send_json({"registered":False,"submission":pending[0] if pending else None}); return
+                self.send_json({"registered":False,"submission":latest}); return
             student_id = session["student_id"]
             student = rows("SELECT s.id,s.name,s.health,s.attendance,s.theory,s.practice,s.group_code,s.isu_id,s.enrollment_number,s.study_form,s.list_position,s.birth_date,s.theory_date,s.faculty,s.course,s.sport_before,s.elective,g.display_code FROM students s LEFT JOIN academic_groups g ON g.group_code=s.group_code WHERE s.id=?",(student_id,))
             if not student: self.send_json({"error":"Карточка студента не найдена."},404); return
             achievements = rows("SELECT category,details,record_date,status,sport_type,distinction,age_group,participant_role,event_result,event_status,team_name FROM achievements WHERE student_id=? ORDER BY id DESC",(student_id,))
             physical = rows("SELECT record_date,exercise,test_category,result,grade FROM physical_tests WHERE student_id=? ORDER BY record_date DESC",(student_id,))
             attendance=rows("SELECT COUNT(*) AS total,SUM(CASE WHEN present THEN 1 ELSE 0 END) AS present FROM attendance_log WHERE student_id=?",(student_id,))[0]
-            self.send_json({"registered":True,"student":student[0],"achievements":achievements,"physical_tests":physical,"attendance":attendance}); return
+            approved = [item["payload"] for item in profiles if item["status"] == "Подтверждено"]
+            metadata = approved[0] if approved else {}
+            electives = {}
+            for profile in approved:
+                if profile.get("elective_semester") and profile.get("elective"):
+                    electives.setdefault(str(profile["elective_semester"]), profile["elective"])
+            student[0].update({key:metadata.get(key) for key in ("prior_rank","prior_gto","elective_semester","personal_data_consent")})
+            self.send_json({"registered":True,"student":student[0],"draft":latest if latest and latest["status"]=="Отклонено" else None,"electives":electives,"achievements":achievements,"physical_tests":physical,"attendance":attendance}); return
         if path == "/api/my-submissions":
             if self.role_required("Студент"): return
             session=self.session_info()
@@ -485,12 +514,43 @@ class App(SimpleHTTPRequestHandler):
         if path == "/api/pending-submissions":
             if self.role_required("Ответственный исполнитель кафедры ФВ"): return
             data=[]
+            groups = {row["group_code"]:row["display_code"] for row in rows("SELECT group_code,display_code FROM academic_groups")}
             for item in rows("SELECT id,email,payload,status,created_at FROM student_submissions WHERE status='На проверке' ORDER BY created_at,id"):
                 try: item["payload"]=json.loads(item["payload"])
                 except (ValueError,TypeError): item["payload"]={}
                 item["has_document"] = bool(item["payload"].pop("document_base64", None))
+                item["has_health_document"] = bool(item["payload"].pop("health_document_base64", None))
+                item["group_name"] = groups.get(item["payload"].get("group_code"))
                 data.append(item)
             self.send_json({"submissions":data}); return
+        if path.startswith("/api/submission-document/"):
+            if self.role_required("Ответственный исполнитель кафедры ФВ"): return
+            submission_id = path.rsplit("/", 1)[1]
+            records = rows("SELECT payload FROM student_submissions WHERE id=?", (int(submission_id),)) if submission_id.isascii() and submission_id.isdecimal() else []
+            payload = json.loads(records[0]["payload"]) if records else {}
+            health = query.get("kind") == ["health"]
+            prefix = "health_" if health else ""
+            try: raw = decode_pdf(payload.get(prefix+"document_base64"))
+            except ValueError: raw = None
+            if not raw:
+                self.send_json({"error":"Документ не найден."},404); return
+            name = quote(payload.get(prefix+"document_name") or "document.pdf", safe="")
+            self.send_response(200)
+            self.send_header("Content-Type","application/pdf")
+            self.send_header("Content-Disposition",f"attachment; filename*=UTF-8''{name}")
+            self.send_header("Cache-Control","private, no-store")
+            self.send_header("Content-Length",str(len(raw)))
+            self.end_headers(); self.wfile.write(raw); return
+        if path == "/api/group-health-summary":
+            if self.role_required("Ответственный исполнитель кафедры ФВ"): return
+            self.send_json({"rows":rows("""
+                SELECT COALESCE(NULLIF(g.faculty,''),NULLIF(s.faculty,''),'Не указан') AS faculty,
+                       COALESCE(g.display_code,s.group_code) AS group_name,
+                       COALESCE(NULLIF(s.health,''),'не указана') AS health,
+                       COALESCE(NULLIF(s.elective,''),'не указана') AS elective, COUNT(*) AS total
+                FROM students s LEFT JOIN academic_groups g ON g.group_code=s.group_code
+                GROUP BY 1,2,3,4 ORDER BY 1,2,3,4
+            """)}); return
         if path == "/api/attendance-options":
             self.send_json({"disciplines":FITNESS_DISCIPLINES,"lesson_types":LESSON_TYPES,"elective_activities":FITNESS_ACTIVITIES}); return
         if path == "/api/consolidated":
@@ -688,9 +748,11 @@ class App(SimpleHTTPRequestHandler):
                 if not con.execute("SELECT 1 FROM academic_groups WHERE group_code=?",(data.get("group_code"),)).fetchone(): raise ValueError("Выберите учебную группу.")
                 salt,digest=password_digest(password)
                 con.execute("INSERT INTO student_accounts(email,password_salt,password_hash) VALUES(?,?,?)",(email,salt,digest))
-                profile={key:data.get(key) for key in ("name","birth_date","group_code","faculty","course","health","sport_before","elective","personal_data_consent","isu_id")}
+                profile={key:data.get(key) for key in ("name","birth_date","group_code","faculty","course","health","sport_before","elective","elective_semester","prior_rank","prior_gto","health_document_name","health_document_base64","personal_data_consent","isu_id")}
+                validate_student_profile(profile)
                 if data.get("category"):
                     validate_achievement_choice(data)
+                    decode_pdf(data.get("document_base64"))
                     profile.update({key:data.get(key) for key in ("category","sport_type","distinction","age_group","team_name","section","event_name","event_status","participant_role","event_result","record_date","order_basis","document_name","document_base64")})
                     if data["category"] not in ACHIEVEMENT_CATEGORIES: raise ValueError("Неизвестный раздел достижения.")
                     required={"Спортивное звание (разряд)":("sport_type","distinction"),"ВФСК «ГТО»":("age_group","distinction"),"Сборная команда":("team_name",),"Спортивная секция":("section",),"Спортивное мероприятие":("event_name","participant_role","event_status")}[data["category"]]
@@ -730,6 +792,19 @@ class App(SimpleHTTPRequestHandler):
                 payload=dict(data); payload.update({"kind":"achievement" if data.get("category") else "profile","email":session["username"]})
                 if not data.get("category") and (len(str(data.get("name","")).split())<2 or not data.get("birth_date") or not data.get("faculty") or not data.get("course") or data.get("personal_data_consent") is not True): raise ValueError("Заполните ФИО, дату рождения, факультет, курс и согласие на обработку персональных данных.")
                 if not data.get("category") and not con.execute("SELECT 1 FROM academic_groups WHERE group_code=?",(data.get("group_code"),)).fetchone(): raise ValueError("Выберите учебную группу.")
+                if not data.get("category"):
+                    source_id = data.get("reuse_health_document_from")
+                    if type(source_id) is int and not payload.get("health_document_base64"):
+                        original = con.execute("SELECT payload FROM student_submissions WHERE id=? AND email=?",
+                                               (source_id,session["username"])).fetchone()
+                        old = json.loads(original["payload"]) if original else {}
+                        if old.get("kind") == "profile" and old.get("health") == payload.get("health"):
+                            for key in ("health_document_base64", "health_document_name"):
+                                payload[key] = old.get(key)
+                    payload.pop("reuse_health_document_from", None)
+                    validate_student_profile(payload)
+                else:
+                    decode_pdf(payload.get("document_base64"))
                 if data.get("category") and data["category"] not in ACHIEVEMENT_CATEGORIES: raise ValueError("Выберите раздел спортивного учета.")
                 if data.get("category"):
                     validate_achievement_choice(data)
@@ -744,12 +819,14 @@ class App(SimpleHTTPRequestHandler):
                 if status not in ("Подтверждено","Отклонено") or (status=="Отклонено" and not note): raise ValueError("Укажите решение; при отказе обязательно напишите причину.")
                 item=con.execute("SELECT * FROM student_submissions WHERE id=?",(submission_id,)).fetchone()
                 if not item or item["status"]!="На проверке": raise ValueError("Заявка уже рассмотрена или не найдена.")
+                updated = con.execute("UPDATE student_submissions SET status=?,review_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='На проверке'", (status,note or None,submission_id))
+                if updated.rowcount != 1: raise ValueError("Заявка уже рассмотрена.")
                 payload=json.loads(item["payload"]); email=item["email"]; student_id=None
                 if status=="Подтверждено":
                     if payload.get("kind")=="profile":
                         group=payload["group_code"]; isu_id=str(payload.get("isu_id") or "").strip() or None
                         account=con.execute("SELECT student_id FROM student_accounts WHERE email=?",(email,)).fetchone()
-                        existing=con.execute("SELECT id FROM students WHERE id=?",(account["student_id"],)).fetchone() if account and account["student_id"] else con.execute("SELECT id FROM students WHERE group_code=? AND ((? IS NOT NULL AND isu_id=?) OR name=?) LIMIT 1",(group,isu_id,isu_id,payload["name"])).fetchone()
+                        existing=con.execute("SELECT id FROM students WHERE id=?",(account["student_id"],)).fetchone() if account and account["student_id"] else con.execute("SELECT id FROM students WHERE group_code=? AND (isu_id=? OR name=?) LIMIT 1",(group,isu_id,payload["name"])).fetchone()
                         if existing:
                             linked=con.execute("SELECT email FROM students WHERE id=?",(existing["id"],)).fetchone()
                             if linked["email"] and linked["email"].lower()!=email.lower(): raise ValueError("Эта карточка уже связана с другой учетной записью. Проверьте заявку вручную.")
@@ -758,6 +835,15 @@ class App(SimpleHTTPRequestHandler):
                             cursor=con.execute("INSERT INTO students(name,health,attendance,theory,practice,group_code,birth_date,email,faculty,course,sport_before,elective,personal_data_consent,isu_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",(payload["name"],payload.get("health") or "не указана",0,"не указано","не указано",group,payload.get("birth_date"),email,payload.get("faculty"),int(payload["course"]),payload.get("sport_before"),payload.get("elective"),True,isu_id)); student_id=cursor.fetchone()["id"]
                         con.execute("UPDATE students SET name=?,group_code=?,health=?,birth_date=?,email=?,faculty=?,course=?,sport_before=?,elective=?,personal_data_consent=?,isu_id=COALESCE(isu_id,?) WHERE id=?",(payload["name"],group,payload.get("health") or "не указана",payload.get("birth_date"),email,payload.get("faculty"),int(payload["course"]),payload.get("sport_before"),payload.get("elective"),True,isu_id,student_id))
                         con.execute("UPDATE student_accounts SET student_id=? WHERE email=?",(student_id,email))
+                        for category, field in (("Спортивное звание (разряд)", "prior_rank"), ("ВФСК «ГТО»", "prior_gto")):
+                            if field not in payload:
+                                continue
+                            label = "До поступления в вуз"
+                            con.execute("DELETE FROM achievements WHERE student_id=? AND category=? AND details=?", (student_id,category,label))
+                            distinction = payload[field]
+                            if distinction and distinction != "б/р":
+                                con.execute("INSERT INTO achievements(student_id,category,details,record_date,status,distinction) VALUES(?,?,?,?,?,?)",
+                                            (student_id,category,label,date.today().isoformat(),"Подтверждено",distinction))
                         if payload.get("category"):
                             category=payload["category"]
                             if category not in ACHIEVEMENT_CATEGORIES: raise ValueError("Неизвестный раздел достижения.")
@@ -772,7 +858,7 @@ class App(SimpleHTTPRequestHandler):
                         fields={"student_id":student_id,"category":category,"details":payload.get("event_name", ""),"record_date":payload.get("record_date") or date.today().isoformat(),"status":"Подтверждено","sport_type":payload.get("sport_type") or payload.get("section"),"distinction":payload.get("distinction"),"age_group":payload.get("age_group"),"order_basis":payload.get("order_basis"),"participant_role":payload.get("participant_role"),"event_result":payload.get("event_result"),"event_status":payload.get("event_status"),"note":payload.get("note"),"document_name":payload.get("document_name"),"document_data":decode_pdf(payload.get("document_base64")),"team_name":payload.get("team_name")}
                         con.execute("INSERT INTO achievements(student_id,category,details,record_date,status,sport_type,distinction,age_group,order_basis,participant_role,event_result,event_status,note,document_name,document_data,team_name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",tuple(fields.values()))
                     else: raise ValueError("Неизвестный тип заявки.")
-                con.execute("UPDATE student_submissions SET status=?,review_note=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?",(status,note or None,submission_id)); con.commit()
+                con.commit()
                 notice="Данные подтверждены." if status=="Подтверждено" else f"Заявка отклонена. Причина: {note}"
                 email_sent=notify_student(email,"Результат проверки данных ФКиС СПбГМТУ",notice)
                 self.send_json({"ok":True,"email_sent":email_sent}); return

@@ -6,7 +6,7 @@
   <meta name="description" content="Учет физической культуры и спорта студентов СПбГМТУ" />
   <title>ФКиС - СПбГМТУ</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=20261010-workspace" />
+  <link rel="stylesheet" href="styles.css?v=role-workflow" />
 </head>
 <body>
   <header class="topbar">
@@ -39,7 +39,7 @@
       <div class="group-picker-row" id="groupPickerRow"><div class="group-picker content-group-picker" id="groupPicker"><button class="group-picker-button" id="groupPickerButton" aria-expanded="false"><span class="picker-dot"></span><span id="topGroupName">12509-05</span><span>⌄</span></button><div class="group-menu" id="groupMenu" hidden><label class="group-search"><span>⌕</span><input id="groupSearch" placeholder="Найти группу, факультет или направление" autocomplete="off" /></label><div class="group-cascade"><section class="group-cascade-column"><h3>Факультет</h3><div id="facultyOptions"></div></section><section class="group-cascade-column"><h3>Направление</h3><div id="directionOptions"></div></section><section class="group-cascade-column course-column"><h3>Курс</h3><div id="courseOptions"></div></section><section class="group-cascade-column group-column"><h3>Группа</h3><div id="groupOptions"></div></section></div><div class="group-picker-foot">Структура групп загружена из расписания СПбГМТУ</div></div></div></div>
       <section id="roleHome" class="view active-view">
         <div class="breadcrumbs">ФКиС <span>/</span> Рабочее место</div><div class="page-heading"><div><h1 id="roleHomeTitle">Рабочее место</h1><p>Все доступные разделы для вашей роли</p></div></div>
-        <div class="role-home-actions" id="roleHomeActions"></div>
+        <div id="roleHomeActions"></div>
       </section>
       <section id="dashboard" class="view">
         <div class="breadcrumbs">Главная <span>/</span> Учет ФКиС</div>
@@ -89,6 +89,10 @@
       </section>
 
       <section id="reports" class="view">
+        <article id="groupHealthSummary" class="panel table-wrap" hidden>
+          <h2>Группы здоровья и элективные дисциплины</h2>
+          <table><thead><tr><th>Факультет</th><th>Группа</th><th>Группа здоровья</th><th>Элективная дисциплина ФКиС</th><th>Студентов</th></tr></thead><tbody></tbody></table>
+        </article>
         <div class="breadcrumbs">Главная <span>/</span> Результаты <span>/</span> Сводные данные</div>
         <div class="page-heading"><div><h1>Сводные данные по СПбГМТУ</h1><p>Осенний семестр 2026 · итоги по загруженным группам</p></div><div class="heading-actions"><button class="secondary-button" id="exportReport">⇩ Скачать XLSX</button></div></div>
         <article class="panel report-table"><div class="panel-head"><div><h2>Сводные данные СПбГМТУ</h2><p>Итоги по курсам, факультетам и загруженному составу университета · без ФИО</p></div></div><div class="table-wrap"><table class="wide-report"><thead><tr><th>Подразделение / курс</th><th>Всего</th><th>Основная</th><th>Подготовительная</th><th>Специальная</th><th>ТиМ: зачет</th><th>ТиМ: не зачет</th><th>Практика: зачет</th><th>Практика: не зачет</th><th>Общая оценка</th><th>Сборная</th><th>ГТО: золото</th><th>ГТО: серебро</th><th>ГТО: бронза</th><th>ГТО: отсутствует</th><th>МС</th><th>КМС</th><th>I разряд</th><th>II разряд</th><th>III разряд</th><th>Разряд: отсутствует</th><th>Достижения с результатом</th><th>Участники</th><th>Волонтеры</th></tr></thead><tbody id="consolidatedBody"></tbody></table></div><p class="form-hint">«Общая оценка» и физические нормативы не рассчитываются без утвержденных кафедрой правил и нормативной таблицы.</p></article>
@@ -110,7 +114,7 @@
   <div class="tour-mask" id="tourMask" hidden aria-live="polite"><div class="tour-spotlight" id="tourSpotlight"></div><div class="tour-card"><span class="tour-count" id="tourCount">1 из 4</span><button class="close-modal" id="closeTour" aria-label="Закрыть обучение">×</button><h2 id="tourTitle"></h2><p id="tourText"></p><div class="tour-actions"><button class="link-button" id="tourSkip">Пропустить</button><button class="primary-button" id="tourNext">Далее</button></div></div></div>
   <div class="toast" id="toast" role="status"></div>
   <script src="form-actions.js?v=20261012"></script>
-  <script src="app.js?v=20261012-forms"></script>
+  <script src="app.js?v=role-workflow"></script>
   <script src="group-picker.js?v=20261010-workspace"></script>
   <script src="achievement-filters.js?v=20260923-categories"></script>
 </body>

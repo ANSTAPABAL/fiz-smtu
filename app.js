@@ -114,7 +114,31 @@ function showRole() {
   $('#groupPickerRow').hidden=selectedRole==='Студент';
   $('#rolePicker').hidden=!!appSession?.auth_enabled;
   $('#roleHomeTitle').textContent=selectedRole;
-  $('#roleHomeActions').innerHTML=access.actions.map(([view,label])=>`<button class="role-action-card" data-go="${view}"><span>${escapeHtml(label)}</span><b>Открыть раздел <span aria-hidden="true">→</span></b></button>`).join('');
+  const [input, results] = {
+    "Преподаватель кафедры ФВ":[access.actions.slice(0,2),access.actions.slice(2)],
+    "Сотрудник ССК «Армада»":[[
+      ['achievements','Спортивный разряд (звание)','rank'], ['achievements','ВФСК «ГТО»','gto'],
+      ['achievements','Сборная команда','team'], ['achievements','Спортивная секция','section'],
+      ['achievements','Спортивное мероприятие','event']
+    ],access.actions.slice(1)],
+    "Студент":[[
+      ['studentPortal','Группа здоровья','','submissionHealth'],
+      ['studentPortal','Спортивный разряд (звание)','','submissionPriorRank'],
+      ['studentPortal','ВФСК «ГТО»','','submissionPriorGto'],
+      ['studentPortal','Вид спорта до поступления в университет','','submissionSportBefore'],
+      ['studentPortal','Адрес электронной почты','','submissionEmail'],
+      ['studentPortal','Выбор элективной дисциплины ФКиС','','submissionElective'],
+      ['studentPortal','Согласие на обработку персональных данных','','submissionConsent'],
+      ['studentPortal','ФИО, дата рождения и учебная группа','','submissionName']
+    ],[['studentPortal','Карточка студента']]],
+    "Ответственный исполнитель кафедры ФВ":[[access.actions[0]],[access.actions[2]]]
+  }[selectedRole];
+  $('#roleHomeActions').innerHTML = [
+    ['ВВОД ДАННЫХ',input], ['РЕЗУЛЬТАТЫ',results]
+  ].map(([title, actions], index)=>`<details name="role-workflow" class="panel role-mode"><summary>${title}</summary>
+    <div class="role-home-actions">${actions.map(([view,label,category,field])=>
+      `<button class="role-action-card" data-go="${view}" data-mode="${index}" data-kind="${category||''}" data-field="${field||''}"><span>${escapeHtml(label)}</span><b>Открыть раздел →</b></button>`
+    ).join('')}</div></details>`).join('');
   if ($('#addStudent')) $('#addStudent').hidden=selectedRole!=="Ответственный исполнитель кафедры ФВ";
 }
 function render() {
@@ -180,6 +204,15 @@ function renderStats() {
   }).join('') : '<p class="empty-state">График появится после сохранения отметок посещаемости.</p>';
 }
 async function renderConsolidated() {
+  const executor = selectedRole === 'Ответственный исполнитель кафедры ФВ';
+  $('#consolidatedBody').closest('article').hidden = executor;
+  $('#exportReport').hidden = executor;
+  $('#groupHealthSummary').hidden = !executor;
+  if (executor) {
+    const {rows} = await api('/api/group-health-summary');
+    $('#groupHealthSummary tbody').innerHTML = rows.map(row=>`<tr>${[row.faculty,row.group_name,row.health,row.elective,row.total].map(value=>`<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="5" class="empty-state">Группы пока не загружены.</td></tr>';
+    return;
+  }
   const {rows}=await api('/api/consolidated');
   $('#consolidatedBody').innerHTML=rows.map(row=>`<tr class="summary-${escapeHtml(row.level)}">${[row.label,row.total,row.main_health,row.prep_health,row.special_health,row.theory_credit,row.theory_no_credit,row.practice_credit,row.practice_no_credit,row.overall_grade||'—',row.teams,row.gto_gold,row.gto_silver,row.gto_bronze,row.gto_none,row.ms,row.kms,row.rank1,row.rank2,row.rank3,row.rank_none,row.sport_achievements,row.participants,row.volunteers].map(value=>`<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('')||'<tr><td colspan="24" class="empty-state">Данных пока нет.</td></tr>';
 }
@@ -211,20 +244,39 @@ async function loadStudentPortal() {
   const [data,mine,groups]=await Promise.all([api('/api/student-data'),api('/api/my-submissions'),api('/api/registration-groups')]);
   studentData=data;
   const groupSelect=$('#submissionGroup');
-  if (groupSelect.options.length<=1) groupSelect.innerHTML='<option value="">Выберите учебную группу</option>'+groups.groups.map(group=>`<option value="${escapeHtml(group.group_code)}">${escapeHtml(group.faculty||'Факультет не указан')} · ${escapeHtml(group.direction||'Направление не указано')} · ${escapeHtml(group.course||'—')} курс · ${escapeHtml(group.display_code)}</option>`).join('');
-  const profile=data.registered?data.student:data.submission?.payload||{};
+  if (groupSelect.options.length<=1) {
+    groupSelect.replaceChildren(new Option('Выберите учебную группу',''), ...groups.groups.map(group=>
+      new Option(group.display_code,group.group_code)));
+    groupSelect.onchange = () => {
+      const group = groups.groups.find(item=>item.group_code === groupSelect.value);
+      if (group?.faculty) $('#submissionFaculty').value = group.faculty;
+      if (group?.course) $('#submissionCourse').value = group.course;
+    };
+  }
+  const profile=data.draft?.payload || (data.registered ? data.student : data.submission?.payload) || {};
+  $('#submissionEmail').value = appSession.username || '';
+  $('#submissionSemester').value = profile.elective_semester || '';
+  $('#submissionPriorRank').value = profile.prior_rank || '';
+  $('#submissionPriorGto').value = profile.prior_gto || '';
   if(profile.name)$('#submissionName').value=profile.name;
   if(profile.birth_date)$('#submissionBirth').value=isoDate(profile.birth_date);
   if(profile.faculty)$('#submissionFaculty').value=profile.faculty;
   if(profile.course)$('#submissionCourse').value=profile.course;
   if(profile.group_code)groupSelect.value=profile.group_code;
-  if(profile.health)$('#submissionHealth').value=profile.health;
-  if(profile.sport_before)$('#submissionSportBefore').value=profile.sport_before;
-  if(profile.elective)$('#submissionElective').value=profile.elective;
-  if(profile.personal_data_consent)$('#submissionConsent').checked=true;
+  $('#submissionHealth').value = profile.health || 'не указана';
+  $('#submissionSportBefore').value = profile.sport_before || '';
+  $('#submissionElective').value = profile.elective || '';
+  $('#submissionConsent').checked = !!profile.personal_data_consent;
   if(profile.birth_date)$('#submissionAgeGroup').value=gtoStageFromBirth(profile.birth_date,$('#submissionDate').value||todayLocal());
   if(!$('#submissionDate').value)$('#submissionDate').value=todayLocal();
-  $('#studentPortalStatus').textContent=data.registered?`Подтвержденный профиль · ${escapeHtml(data.student.display_code||data.student.group_code)}`:data.submission?.status==='Отклонено'?`Заявка отклонена: ${escapeHtml(data.submission.review_note||'исправьте сведения и отправьте повторно')}`:'Профиль ожидает проверки ответственным исполнителем.';
+  const returned = data.draft || (data.submission?.status === 'Отклонено' ? data.submission : null);
+  $('#existingHealthCertificate').hidden = !returned?.has_health_document;
+  $('#studentPortalStatus').textContent = returned
+    ? `Заявка возвращена на редактирование: ${returned.review_note || 'исправьте сведения и отправьте повторно'}`
+    : data.registered ? `Подтвержденный профиль · ${data.student.display_code || data.student.group_code}`
+    : 'Профиль ожидает проверки ответственным исполнителем.';
+  data.achievements ||= [];
+  data.physical_tests ||= [];
   const events=data.achievements.filter(item=>categoryKey(item.category)==='event');
   const ranks=data.achievements.filter(item=>categoryKey(item.category)==='rank');
   const gto=data.achievements.filter(item=>categoryKey(item.category)==='gto');
@@ -237,7 +289,8 @@ async function loadStudentPortal() {
     const grid=$('#studentCardData .detail-grid');
     const attendanceField=[...grid.children].find(node=>node.querySelector('span')?.textContent==='Посещаемость ФКиС');
     if(attendanceField)attendanceField.querySelector('b').textContent=`${Number(data.attendance?.present||0)} из ${Number(data.attendance?.total||0)} отмеченных занятий · % от обязательного количества не задан`;
-    for(const [label,value] of [['Вид спорта до поступления',data.student.sport_before||'не указан'],['Элективная дисциплина ФКиС',data.student.elective||'не указана']]){
+    const electives = Object.entries(data.electives || {}).map(([term, choice])=>`${term} семестр — ${choice}`).join(' · ');
+    for(const [label,value] of [['Адрес электронной почты',appSession.username],['Вид спорта до поступления',data.student.sport_before||'не указан'],['Элективные дисциплины ФКиС',electives||data.student.elective||'не указана'],['Разряд до поступления',data.student.prior_rank||'не указан'],['ГТО до поступления',data.student.prior_gto||'не указано']]){
       const field=document.createElement('div');field.innerHTML=`<span>${label}</span><b>${escapeHtml(value)}</b>`;grid.insertBefore(field,grid.querySelector('.full-detail'));
     }
     grid.querySelectorAll('div').forEach(field=>{if(field.querySelector('span')?.textContent==='Физическая подготовленность'){field.querySelector('b').innerHTML=data.physical_tests.map(item=>`${escapeHtml(item.test_category||'группа не указана')} · ${escapeHtml(item.exercise)}: ${escapeHtml(item.result)} (${escapeHtml(item.grade||'норматив не загружен')})`).join('<br>')||'результатов пока нет';}});
@@ -248,10 +301,28 @@ async function loadApprovals() {
   const {submissions}=await api('/api/pending-submissions');
   $('#approvalList').innerHTML=submissions.map(item=>{
     const p=item.payload||{};
-    return `<article class="panel approval-card"><p class="eyebrow">Заявка №${item.id} · ${escapeHtml(displayDate(item.created_at))}</p><h2>${escapeHtml(p.name||p.category||'Данные студента')}</h2><div class="detail-grid"><div><span>Электронная почта</span><b>${escapeHtml(item.email)}</b></div><div><span>Группа</span><b>${escapeHtml(p.group_code||'—')}</b></div><div><span>Факультет и курс</span><b>${escapeHtml(p.faculty||'—')} · ${escapeHtml(p.course||'—')}</b></div><div><span>Дата рождения</span><b>${escapeHtml(displayDate(p.birth_date))}</b></div><div><span>Группа здоровья</span><b>${escapeHtml(p.health||'—')}</b></div><div><span>Достижение</span><b>${escapeHtml(p.category||'—')} ${escapeHtml(p.distinction||'')}</b></div>${p.event_status?`<div><span>Статус спортивного мероприятия</span><b>${escapeHtml(p.event_status)}</b></div>`:''}${item.has_document?'<div><span>Документ</span><b>PDF приложен</b></div>':''}</div><label>Комментарий (обязателен при отклонении)<textarea id="review-note-${item.id}" rows="2"></textarea></label><div class="modal-actions"><button class="secondary-button" data-review="${item.id}" data-status="Отклонено">Вернуть студенту</button><button class="primary-button" data-review="${item.id}" data-status="Подтверждено">Подтвердить</button></div></article>`;
+    const profile = p.kind === 'profile' ? [
+      ['Группа',item.group_name||p.group_code], ['Факультет',p.faculty], ['Курс',p.course],
+      ['Дата рождения',displayDate(p.birth_date)], ['Группа здоровья',p.health],
+      ['Вид спорта до поступления',p.sport_before], ['Разряд до поступления',p.prior_rank],
+      ['ГТО до поступления',p.prior_gto], ['Элективная дисциплина',p.elective],
+      ['Семестр',p.elective_semester], ['Согласие на обработку',p.personal_data_consent?'Дано':'—']
+    ] : [];
+    const fields = [['Электронная почта',item.email], ...profile,
+      ['Достижение', [p.category,p.distinction,p.sport_type,p.age_group,p.team_name,p.section,p.event_name,p.event_status,p.participant_role,p.event_result].filter(Boolean).join(' · ')]];
+    const details = fields.filter(([,value])=>value).map(([label,value])=>`<div><span>${label}</span><b>${escapeHtml(value)}</b></div>`).join('');
+    const pdf = `/api/submission-document/${item.id}`;
+    return `<article class="panel approval-card"><p class="eyebrow">Заявка №${item.id} · ${escapeHtml(displayDate(item.created_at))}</p><h2>${escapeHtml(p.name||p.category||'Данные студента')}</h2><div class="detail-grid">${details}${item.has_health_document?`<div><a href="${pdf}?kind=health">Скачать справку о группе здоровья</a></div>`:''}${item.has_document?`<div><a href="${pdf}">Скачать документ о достижении</a></div>`:''}</div><label>Комментарий (обязателен при отклонении)<textarea id="review-note-${item.id}" rows="2"></textarea></label><div class="modal-actions"><button class="secondary-button" data-review="${item.id}" data-status="Отклонено">Вернуть студенту</button><button class="primary-button" data-review="${item.id}" data-status="Подтверждено">Подтвердить</button></div></article>`;
   }).join('')||'<article class="panel empty-state">Новых заявок на проверку нет.</article>';
 }
 async function initializeApp() {
+  const profileFields = $('#studentSubmissionPanel .form-grid');
+  $('#submissionHealth').add(new Option('не указана','не указана'), 0);
+  profileFields.insertAdjacentHTML('afterbegin', '<label>Адрес электронной почты<input id="submissionEmail" type="email" readonly></label>');
+  $('#submissionElective').parentElement.insertAdjacentHTML('afterend', `<label>Семестр элективной дисциплины<select id="submissionSemester"><option value="">Выберите семестр</option>${Array.from({length:11},(_,i)=>`<option value="${i+2}">${i+2} семестр</option>`).join('')}</select></label>
+    <label>Спортивный разряд до поступления<select id="submissionPriorRank"><option value="">Не указано</option><option>б/р</option><option>Третий разряд</option><option>Второй разряд</option><option>Первый разряд</option><option>Кандидат в мастера спорта</option><option>Мастер спорта</option></select></label>
+    <label>Знак ГТО до поступления<select id="submissionPriorGto"><option value="">Не указано</option><option>Золотой знак</option><option>Серебряный знак</option><option>Бронзовый знак</option></select></label>
+    <label>Справка о группе здоровья (PDF)<input id="submissionHealthDocument" type="file" accept="application/pdf,.pdf"><small id="existingHealthCertificate" hidden>Прежняя справка сохранится, если группа здоровья не изменилась.</small></label>`);
   ['achievementAgeGroup','editAchievementAgeGroup','submissionAgeGroup'].forEach(replaceGtoInput);
   addStudentDocumentInput();
   addEventStatusFields();
@@ -289,7 +360,7 @@ function resetAttendanceFlow() {
   $('#saveAttendance').hidden = true;
   $('#attendanceSubtitle').innerHTML = `Группа <span data-group-label>${escapeHtml(window.groupDisplayName?.(activeGroup) || activeGroup)}</span> · выберите дисциплину`;
 }
-function go(view) {
+function go(view, mode, field) {
   if(appSession&&view!=='roleHome'){
     const permitted={"Преподаватель кафедры ФВ":["dashboard","students","attendance","physical","groupCard","reports"],"Сотрудник ССК «Армада»":["students","achievements","groupCard","reports"],"Студент":["studentPortal"],"Ответственный исполнитель кафедры ФВ":["approvals","health","reports"]};
     if(!permitted[selectedRole]?.includes(view))return;
@@ -299,8 +370,17 @@ function go(view) {
   if (view === 'attendance') resetAttendanceFlow();
   if (view === 'reports') renderConsolidated().catch(error=>toast(error.message));
   if (view === 'approvals') loadApprovals().catch(error=>toast(error.message));
-  if (view === 'studentPortal') loadStudentPortal().catch(error=>toast(error.message));
+  if (view === 'studentPortal') {
+    $('#studentSubmissionPanel').hidden = mode === '1';
+    $('#studentCardData').closest('article').hidden = mode === '0';
+    loadStudentPortal().catch(error=>toast(error.message));
+  }
   scrollTo({top:0,behavior:'smooth'});
+  if (field) requestAnimationFrame(() => {
+    const input = document.getElementById(field);
+    input.focus({preventScroll:true});
+    input.scrollIntoView({block:'center',behavior:'smooth'});
+  });
 }
 function studentCard(id) {
   const student = students.find(item => item.id === Number(id));
@@ -479,7 +559,13 @@ document.addEventListener('click', async event => {
   const reviewButton = event.target.closest('[data-review]');
   const healthSave = event.target.closest('[data-save-health]');
   if (nav) go(nav.dataset.view);
-  if (goButton) go(goButton.dataset.go);
+  if (goButton) {
+    go(goButton.dataset.go, goButton.dataset.mode, goButton.dataset.field);
+    if (goButton.dataset.kind) {
+      $(`[data-achievement-filter="${goButton.dataset.kind}"]`).click();
+      openAchievementForm(goButton.dataset.kind);
+    }
+  }
   if (studentButton) studentCard(studentButton.dataset.student);
   if(healthSave){const studentId=Number(healthSave.dataset.saveHealth),health=$(`[data-health-student="${studentId}"]`).value;if(!health)return toast('Выберите группу здоровья.');try{await api('/api/student-health','PUT',{student_id:studentId,health});await load();toast('Группа здоровья сохранена.')}catch(error){toast(error.message)}}
   if (achievementButton) editAchievement(achievementButton.dataset.achievement);
@@ -554,11 +640,19 @@ $('#submitStudentData').onclick=async()=>{
   const category=$('#submissionCategory').value;
   if(category&&!studentData?.registered)return toast('Сначала дождитесь подтверждения профиля; достижение можно подать вместе с первичной регистрацией.');
   const data=category?{category,sport_type:$('#submissionSport').value,distinction:$('#submissionDistinction').value,age_group:$('#submissionAgeGroup').value,birth_date:studentData?.student?.birth_date,team_name:$('#submissionTeam').value,section:$('#submissionSection').value,event_name:$('#submissionEvent').value,event_status:$('#submissionEventStatus').value,participant_role:$('#submissionRole').value,event_result:$('#submissionResult').value,record_date:$('#submissionDate').value,order_basis:$('#submissionOrder').value}:{name:$('#submissionName').value.trim(),birth_date:$('#submissionBirth').value,faculty:$('#submissionFaculty').value.trim(),course:Number($('#submissionCourse').value),group_code:$('#submissionGroup').value,health:$('#submissionHealth').value,sport_before:$('#submissionSportBefore').value.trim(),elective:$('#submissionElective').value.trim(),personal_data_consent:$('#submissionConsent').checked};
-  const file=$('#submissionDocument').files[0];
-  if(file){if(file.type!=='application/pdf'||file.size>10*1024*1024)return toast('Подтверждающий документ должен быть PDF до 10 МБ.');const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Не удалось прочитать PDF.'));reader.readAsDataURL(file);});data.document_name=file.name;data.document_base64=String(dataUrl).split(',')[1]||'';}
-  try{await api('/api/student-submissions','POST',data);$('#submissionCategory').value='';document.querySelectorAll('.submission-field').forEach(field=>field.hidden=true);await loadStudentPortal();toast('Данные отправлены ответственному на проверку.');}catch(error){toast(error.message);}
+  if (!category) {
+    data.elective_semester = $('#submissionSemester').value;
+    data.prior_rank = $('#submissionPriorRank').value;
+    data.prior_gto = $('#submissionPriorGto').value;
+    const returned = studentData?.draft || studentData?.submission;
+    if (returned?.status === 'Отклонено' && returned.has_health_document) data.reuse_health_document_from = returned.id;
+    if (data.elective && !data.elective_semester) return toast('Выберите семестр элективной дисциплины.');
+  }
+  const file=$(category?'#submissionDocument':'#submissionHealthDocument').files[0];
+  if(file){if(file.type!=='application/pdf'||file.size>3*1024*1024)return toast('Приложите PDF до 3 МБ.');const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Не удалось прочитать PDF.'));reader.readAsDataURL(file);});const prefix=category?'':'health_';data[prefix+'document_name']=file.name;data[prefix+'document_base64']=String(dataUrl).split(',')[1]||'';}
+  try{await api('/api/student-submissions','POST',data);$('#submissionCategory').value='';$('#submissionDocument').value='';$('#submissionHealthDocument').value='';document.querySelectorAll('.submission-field').forEach(field=>field.hidden=true);await loadStudentPortal();toast('Данные отправлены ответственному на проверку.');}catch(error){toast(error.message);}
 };
-$('#openAchievement').onclick=()=>{
+function openAchievementForm(kind) {
   ['achievementSport','achievementDistinction','achievementAgeGroup','achievementTeam','achievementSection','achievementEvent','achievementResult','achievementEventStatus','achievementOrder','achievementNote'].forEach(id=>$('#'+id).value='');
   $('#achievementStatus').value='Действующий';
   $('#achievementRole').value='Участник';
@@ -566,11 +660,13 @@ $('#openAchievement').onclick=()=>{
   $('#achievementStudent').innerHTML=students.map(student=>`<option value="${student.id}">${escapeHtml(student.name)}</option>`).join('');
   $('#achievementDate').value=todayLocal();
   $('#achievementDocument').value='';
-  $('#achievementCategory').value='Спортивное звание (разряд)';
+  const category = [...$('#achievementCategory').options].find(option=>categoryKey(option.value)===kind)?.value;
+  $('#achievementCategory').value=category || 'Спортивное звание (разряд)';
   const selected=$('#achievementStudent').selectedOptions[0];$('#achievementAgeGroup').value=gtoStageFromBirth(selected?.dataset.birth,$('#achievementDate').value)||'';
-  fillCategoryFields('','Спортивное звание (разряд)');
+  fillCategoryFields('', $('#achievementCategory').value);
   $('#achievementModal').hidden=false;
-};
+}
+$('#openAchievement').onclick=()=>openAchievementForm($('.achievement-tabs .active')?.dataset.achievementFilter);
 $('#achievementCategory').onchange=event=>{fillCategoryFields('',event.target.value);if(categoryKey(event.target.value)==='gto'){const selected=$('#achievementStudent').selectedOptions[0];$('#achievementAgeGroup').value=gtoStageFromBirth(selected?.dataset.birth,$('#achievementDate').value)||'';}};
 $('#editAchievementCategory').onchange=event=>fillCategoryFields('edit',event.target.value);
 $('#saveAchievement').onclick=async()=>{
