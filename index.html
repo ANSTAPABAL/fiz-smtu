@@ -6,38 +6,24 @@
   <meta name="description" content="Учет физической культуры и спорта студентов СПбГМТУ" />
   <title>ФКиС - СПбГМТУ</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=role-workflow" />
+  <link rel="stylesheet" href="styles.css?v=workspace-sections" />
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#dashboard" aria-label="СПбГМТУ, перейти на главную">
+    <a class="brand" href="#roleHome" aria-label="СПбГМТУ, перейти на рабочее место">
       <img class="brand-mark" src="smtu-logo.svg" alt="" />
       <span><b>СПбГМТУ</b><small>Санкт-Петербургский государственный<br>морской технический университет</small></span>
     </a>
     <div class="top-actions"><button class="text-button" id="guideStart">Инструкция</button><div class="role-picker" id="rolePicker"><button class="profile-button" id="roleButton" aria-expanded="false">Преподаватель кафедры ФВ <span>⌄</span></button><div class="role-menu" id="roleMenu" hidden><p>Только локальная демонстрация</p><button data-role="Студент">Студент</button><button data-role="Преподаватель кафедры ФВ">Преподаватель кафедры ФВ</button><button data-role="Сотрудник ССК «Армада»">Сотрудник ССК «Армада»</button><button data-role="Ответственный исполнитель кафедры ФВ">Ответственный исполнитель кафедры ФВ</button><small>В production роль назначается при входе и не переключается из интерфейса.</small></div></div><button class="text-button" id="signOut" hidden>Выйти</button></div>
   </header>
 
-  <div class="layout">
-    <aside class="sidebar">
-      <p class="section-label">ФКиС</p>
-      <nav aria-label="Основная навигация">
-        <button class="nav-item" data-view="roleHome"><span>⌂</span> Рабочее место</button>
-        <button class="nav-item active" data-view="dashboard"><span>▦</span> Обзор</button>
-        <button class="nav-item" data-view="students"><span>♙</span> Студенты</button>
-        <button class="nav-item" data-view="attendance"><span>✓</span> Посещаемость</button>
-        <button class="nav-item" data-view="physical"><span>↗</span> Физподготовка</button>
-        <button class="nav-item" data-view="achievements"><span>★</span> Достижения</button>
-        <button class="nav-item" data-view="groupCard"><span>▣</span> Карточка группы</button>
-        <button class="nav-item" data-view="reports"><span>▤</span> Сводные данные</button>
-        <button class="nav-item" data-view="studentPortal"><span>♙</span> Мои данные</button>
-        <button class="nav-item" data-view="approvals"><span>✓</span> Проверка заявок</button>
-        <button class="nav-item" data-view="health"><span>♥</span> Группа здоровья</button>
-      </nav>
-    </aside>
-
+  <div class="layout workspace-layout">
     <main>
+      <p class="empty-state" id="workspaceLoading" role="status">Загружаем рабочее место…</p>
+      <div id="workspaceRecovery" class="workspace-return" hidden><button class="secondary-button" id="retryWorkspace">Повторить</button> <a href="/login">Перейти ко входу</a></div>
+      <div class="workspace-return" id="workspaceReturn" hidden><button class="text-button" data-go="roleHome">← Рабочее место</button></div>
       <div class="group-picker-row" id="groupPickerRow"><div class="group-picker content-group-picker" id="groupPicker"><button class="group-picker-button" id="groupPickerButton" aria-expanded="false"><span class="picker-dot"></span><span id="topGroupName">12509-05</span><span>⌄</span></button><div class="group-menu" id="groupMenu" hidden><label class="group-search"><span>⌕</span><input id="groupSearch" placeholder="Найти группу, факультет или направление" autocomplete="off" /></label><div class="group-cascade"><section class="group-cascade-column"><h3>Факультет</h3><div id="facultyOptions"></div></section><section class="group-cascade-column"><h3>Направление</h3><div id="directionOptions"></div></section><section class="group-cascade-column course-column"><h3>Курс</h3><div id="courseOptions"></div></section><section class="group-cascade-column group-column"><h3>Группа</h3><div id="groupOptions"></div></section></div><div class="group-picker-foot">Структура групп загружена из расписания СПбГМТУ</div></div></div></div>
-      <section id="roleHome" class="view active-view">
+      <section id="roleHome" class="view">
         <div class="breadcrumbs">ФКиС <span>/</span> Рабочее место</div><div class="page-heading"><div><h1 id="roleHomeTitle">Рабочее место</h1><p>Все доступные разделы для вашей роли</p></div></div>
         <div id="roleHomeActions"></div>
       </section>
@@ -114,7 +100,7 @@
   <div class="tour-mask" id="tourMask" hidden aria-live="polite"><div class="tour-spotlight" id="tourSpotlight"></div><div class="tour-card"><span class="tour-count" id="tourCount">1 из 4</span><button class="close-modal" id="closeTour" aria-label="Закрыть обучение">×</button><h2 id="tourTitle"></h2><p id="tourText"></p><div class="tour-actions"><button class="link-button" id="tourSkip">Пропустить</button><button class="primary-button" id="tourNext">Далее</button></div></div></div>
   <div class="toast" id="toast" role="status"></div>
   <script src="form-actions.js?v=20261012"></script>
-  <script src="app.js?v=role-workflow"></script>
+  <script src="app.js?v=workspace-sections"></script>
   <script src="group-picker.js?v=20261010-workspace"></script>
   <script src="achievement-filters.js?v=20260923-categories"></script>
 </body>

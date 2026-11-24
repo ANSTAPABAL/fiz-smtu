@@ -2,6 +2,11 @@
 
 [hidden]{display:none!important}
 .role-mode{margin-bottom:14px;padding:0 18px}
+.layout.workspace-layout{display:block;background:#fff}
+.workspace-return{max-width:1280px;margin:0 auto 16px}
+body:has(#workspaceLoading:not([hidden])) #rolePicker,
+#workspaceLoading:not([hidden]) ~ .group-picker-row{display:none}
+#roleHomeActions button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 .role-mode summary{cursor:pointer;padding:16px 0;color:var(--navy);font-weight:700}
 .role-mode .role-home-actions{padding-bottom:18px}
 #groupHealthSummary h2{padding:16px 18px}

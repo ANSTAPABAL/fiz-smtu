@@ -98,30 +98,17 @@ function updateGroupLabels() {
   if (groupName) groupName.textContent = label;
 }
 window.updateGroupLabels = updateGroupLabels;
-function showRole() {
-  $('#roleButton').textContent = selectedRole;
-  $('#roleMenu').hidden = true;
-  $('#roleButton').setAttribute('aria-expanded', 'false');
-  localStorage.setItem('fkis-role', selectedRole);
-  const access={
-    "Преподаватель кафедры ФВ":{actions:[["attendance","Посещаемость занятий"],["physical","Физическая подготовленность"],["students","Карточка студента"],["groupCard","Карточка группы"],["reports","Сводные данные"]],nav:["dashboard","students","attendance","physical","groupCard","reports"]},
-    "Сотрудник ССК «Армада»":{actions:[["achievements","Спортивные разряды, ГТО и мероприятия"],["students","Карточка студента"],["groupCard","Карточка группы"],["reports","Сводные данные"]],nav:["students","achievements","groupCard","reports"]},
-    "Студент":{actions:[["studentPortal","Личный кабинет студента"]],nav:["studentPortal"]},
-    "Ответственный исполнитель кафедры ФВ":{actions:[["approvals","Проверка заявок студентов"],["health","Группы здоровья"],["reports","Сводные данные"]],nav:["approvals","health","reports"]}
-  }[selectedRole];
-  document.querySelectorAll('.nav-item').forEach(button=>button.hidden=button.dataset.view!=='roleHome'&&!access.nav.includes(button.dataset.view));
-  $('#groupPicker').hidden=selectedRole==='Студент';
-  $('#groupPickerRow').hidden=selectedRole==='Студент';
-  $('#rolePicker').hidden=!!appSession?.auth_enabled;
-  $('#roleHomeTitle').textContent=selectedRole;
-  const [input, results] = {
-    "Преподаватель кафедры ФВ":[access.actions.slice(0,2),access.actions.slice(2)],
+const workspaceSections = {
+    "Преподаватель кафедры ФВ":[[
+      ['attendance','Посещаемость занятий'], ['physical','Физическая подготовленность']
+    ],[['dashboard','Обзор группы'],['students','Карточка студента'],['groupCard','Карточка группы'],['reports','Сводные данные']]],
     "Сотрудник ССК «Армада»":[[
       ['achievements','Спортивный разряд (звание)','rank'], ['achievements','ВФСК «ГТО»','gto'],
       ['achievements','Сборная команда','team'], ['achievements','Спортивная секция','section'],
       ['achievements','Спортивное мероприятие','event']
-    ],access.actions.slice(1)],
+    ],[['students','Карточка студента'],['groupCard','Карточка группы'],['reports','Сводные данные']]],
     "Студент":[[
+      ['studentPortal','ФИО, дата рождения и учебная группа','','submissionName'],
       ['studentPortal','Группа здоровья','','submissionHealth'],
       ['studentPortal','Спортивный разряд (звание)','','submissionPriorRank'],
       ['studentPortal','ВФСК «ГТО»','','submissionPriorGto'],
@@ -129,14 +116,34 @@ function showRole() {
       ['studentPortal','Адрес электронной почты','','submissionEmail'],
       ['studentPortal','Выбор элективной дисциплины ФКиС','','submissionElective'],
       ['studentPortal','Согласие на обработку персональных данных','','submissionConsent'],
-      ['studentPortal','ФИО, дата рождения и учебная группа','','submissionName']
+      ['studentPortal','Подать спортивное достижение','','submissionCategory']
     ],[['studentPortal','Карточка студента']]],
-    "Ответственный исполнитель кафедры ФВ":[[access.actions[0]],[access.actions[2]]]
-  }[selectedRole];
+    "Ответственный исполнитель кафедры ФВ":[[['approvals','Проверка заявок студентов'],['health','Группы здоровья']],[['reports','Сводные данные']]]
+};
+const studentSectionFields = {
+  submissionName: ['submissionName','submissionBirth','submissionFaculty','submissionCourse','submissionGroup'],
+  submissionHealth: ['submissionHealth','submissionHealthDocument'],
+  submissionPriorRank: ['submissionPriorRank'],
+  submissionPriorGto: ['submissionPriorGto'],
+  submissionSportBefore: ['submissionSportBefore'],
+  submissionEmail: ['submissionEmail'],
+  submissionElective: ['submissionElective','submissionSemester'],
+  submissionConsent: ['submissionConsent'],
+  submissionCategory: ['submissionCategory']
+};
+let studentPortalRequest;
+function showRole() {
+  const [input, results] = workspaceSections[selectedRole];
+  const openMode = [...$('#roleHomeActions').querySelectorAll('details')].findIndex(section=>section.open);
+  $('#roleButton').textContent = selectedRole;
+  $('#roleMenu').hidden = true;
+  $('#roleButton').setAttribute('aria-expanded', 'false');
+  $('#rolePicker').hidden = appSession.auth_enabled;
+  $('#roleHomeTitle').textContent = selectedRole;
   $('#roleHomeActions').innerHTML = [
     ['ВВОД ДАННЫХ',input], ['РЕЗУЛЬТАТЫ',results]
-  ].map(([title, actions], index)=>`<details name="role-workflow" class="panel role-mode"><summary>${title}</summary>
-    <div class="role-home-actions">${actions.map(([view,label,category,field])=>
+  ].map(([title, actions], index)=>`<details name="role-workflow" class="panel role-mode"${index===openMode?' open':''}><summary>${title}</summary>
+    <div class="role-home-actions">${actions.filter(([, , ,field])=>field !== 'submissionCategory' || studentData?.registered).map(([view,label,category,field])=>
       `<button class="role-action-card" data-go="${view}" data-mode="${index}" data-kind="${category||''}" data-field="${field||''}"><span>${escapeHtml(label)}</span><b>Открыть раздел →</b></button>`
     ).join('')}</div></details>`).join('');
   if ($('#addStudent')) $('#addStudent').hidden=selectedRole!=="Ответственный исполнитель кафедры ФВ";
@@ -297,6 +304,26 @@ async function loadStudentPortal() {
   }
   $('#mySubmissionList').innerHTML=mine.submissions.map(item=>`<div class="approval-card"><b>${escapeHtml(item.status)}</b><span>${escapeHtml(displayDate(item.created_at))}</span>${item.review_note?`<p>${escapeHtml(item.review_note)}</p>`:''}</div>`).join('')||'<p class="empty-state">Отправленных заявок пока нет.</p>';
 }
+function openStudentSection(mode, field) {
+  const panel = $('#studentSubmissionPanel');
+  const results = mode === '1';
+  panel.hidden = results;
+  $('#studentCardData').closest('article').hidden = !results;
+  $('#studentPortal h1').textContent = results ? 'Карточка студента' :
+    workspaceSections['Студент'][0].find(action=>action[3]===field)?.[1] || 'Ввод данных';
+  if (results) return;
+  const activeFields = studentSectionFields[field || 'submissionName'];
+  for (const label of panel.querySelector('.form-grid').children) {
+    if (!label.classList.contains('submission-field')) label.hidden = !activeFields.includes(label.querySelector('input,select')?.id);
+  }
+  const category = $('#submissionCategory');
+  if (field !== 'submissionCategory') category.value = '';
+  category.dispatchEvent(new Event('change'));
+  $('#submitStudentData').hidden = field === 'submissionEmail';
+  $('#submitStudentData').disabled = !studentData;
+  $('#studentSubmissionPanel h2').hidden = true;
+  $('#studentSubmissionPanel .eyebrow').hidden = true;
+}
 async function loadApprovals() {
   const {submissions}=await api('/api/pending-submissions');
   $('#approvalList').innerHTML=submissions.map(item=>{
@@ -332,12 +359,24 @@ async function initializeApp() {
   $('#achievementDate').addEventListener('change',()=>{const option=$('#achievementStudent').selectedOptions[0];$('#achievementAgeGroup').value=gtoStageFromBirth(option?.dataset.birth,$('#achievementDate').value)||'';});
   $('#editAchievementStudent').addEventListener('change',()=>{const option=$('#editAchievementStudent').selectedOptions[0];$('#editAchievementAgeGroup').value=gtoStageFromBirth(option?.dataset.birth,$('#editAchievementDate').value)||'';});
   appSession=await api('/api/session');
-  selectedRole=appSession.role||'Преподаватель кафедры ФВ';
+  if (appSession.auth_enabled && !appSession.authenticated) {
+    location.replace('/login');
+    return;
+  }
+  if (!workspaceSections[appSession.role]) throw new Error('Не удалось определить роль.');
+  selectedRole=appSession.role;
   const signOut=$('#signOut');
   signOut.hidden=!appSession.authenticated;
   signOut.onclick=async()=>{await fetch('/api/logout',{method:'POST'});location.assign('/login');};
   showRole(); go('roleHome');
-  if(selectedRole==='Студент') await loadStudentPortal(); else await load();
+  $('#workspaceLoading').hidden = true;
+  if(selectedRole==='Студент') {
+    studentPortalRequest = loadStudentPortal().then(()=>{
+      if (studentData.registered) showRole();
+    }).catch(()=>{});
+  } else {
+    load().catch(error=>toast(error.message));
+  }
 }
 window.toast = toast;
 window.setActiveGroup = group => {
@@ -361,25 +400,28 @@ function resetAttendanceFlow() {
   $('#attendanceSubtitle').innerHTML = `Группа <span data-group-label>${escapeHtml(window.groupDisplayName?.(activeGroup) || activeGroup)}</span> · выберите дисциплину`;
 }
 function go(view, mode, field) {
-  if(appSession&&view!=='roleHome'){
-    const permitted={"Преподаватель кафедры ФВ":["dashboard","students","attendance","physical","groupCard","reports"],"Сотрудник ССК «Армада»":["students","achievements","groupCard","reports"],"Студент":["studentPortal"],"Ответственный исполнитель кафедры ФВ":["approvals","health","reports"]};
-    if(!permitted[selectedRole]?.includes(view))return;
-  }
+  if (!appSession || (view !== 'roleHome' && !workspaceSections[selectedRole].flat().some(([section])=>section===view))) return;
   document.querySelectorAll('.view').forEach(section => section.classList.toggle('active-view', section.id === view));
-  document.querySelectorAll('.nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
+  $('#workspaceReturn').hidden = view === 'roleHome';
+  $('#groupPickerRow').hidden = !['dashboard','students','attendance','physical','achievements','groupCard','health'].includes(view);
   if (view === 'attendance') resetAttendanceFlow();
   if (view === 'reports') renderConsolidated().catch(error=>toast(error.message));
   if (view === 'approvals') loadApprovals().catch(error=>toast(error.message));
   if (view === 'studentPortal') {
-    $('#studentSubmissionPanel').hidden = mode === '1';
-    $('#studentCardData').closest('article').hidden = mode === '0';
-    loadStudentPortal().catch(error=>toast(error.message));
+    openStudentSection(mode, field);
+    if (!studentData) {
+      const loading = studentPortalRequest || Promise.resolve();
+      loading.then(async()=>{
+        if (!studentData) await loadStudentPortal();
+        $('#submitStudentData').disabled = false;
+      }).catch(error=>toast(error.message));
+    }
   }
   scrollTo({top:0,behavior:'smooth'});
   if (field) requestAnimationFrame(() => {
     const input = document.getElementById(field);
-    input.focus({preventScroll:true});
-    input.scrollIntoView({block:'center',behavior:'smooth'});
+    input?.focus({preventScroll:true});
+    input?.scrollIntoView({block:'nearest',behavior:'smooth'});
   });
 }
 function studentCard(id) {
@@ -503,7 +545,7 @@ async function readAchievementForm(prefix) { return await achievementPayload(pre
 function applyStudentSearch() { applyStudentFilter(); }
 function updateTour() {
   const item = tour[step];
-  go(item.view);
+  go(item.view,item.mode,item.field);
   $('#tourTitle').textContent = item.title;
   $('#tourText').textContent = item.text;
   $('#tourCount').textContent = `${step+1} из ${tour.length}`;
@@ -533,7 +575,7 @@ const tourByRole = {
   ],
   "Сотрудник ССК «Армада»":[{view:'achievements',target:'.achievement-tabs',title:'Спортивные достижения',text:'Ведите разряды, ГТО, сборные команды, спортивные секции и мероприятия. Поля меняются в зависимости от раздела.'},{view:'groupCard',target:'#groupRosterBody',title:'Карточка группы',text:'Ведомость показывает состав группы и подтвержденные показатели учета.'}],
   "Ответственный исполнитель кафедры ФВ":[{view:'approvals',target:'#approvalList',title:'Проверка заявок',text:'Подтвердите данные студента или верните их на исправление с причиной. Студент увидит решение в личном кабинете; письмо отправится при настроенном SMTP.'},{view:'health',target:'#healthBody',title:'Группа здоровья',text:'Выберите категорию здоровья для студента и сохраните изменение.'},{view:'reports',target:'#consolidatedBody',title:'Сводные данные',text:'Отчет сгруппирован по курсам и содержит только числовые показатели, без ФИО.'}],
-  "Студент":[{view:'studentPortal',target:'#studentSubmissionPanel',title:'Ввод данных студентом',text:'Отправьте сведения о себе или достижении ответственному исполнителю на проверку.'},{view:'studentPortal',target:'#mySubmissionList',title:'Результаты и решения',text:'В карточке отображаются подтвержденные данные и причины возврата заявок на исправление.'}]
+  "Студент":[{view:'studentPortal',mode:'0',field:'submissionName',target:'#studentSubmissionPanel',title:'Ввод данных студентом',text:'Заполните разделы профиля на рабочем месте и отправьте их одной заявкой.'},{view:'studentPortal',mode:'1',target:'#mySubmissionList',title:'Результаты и решения',text:'В карточке отображаются подтвержденные данные и причины возврата заявок на исправление.'}]
 };
 const defaultTour = [
   {view:'dashboard',target:'.metric-grid',title:'Карточка группы',text:'Сводные показатели пересчитываются по выбранной группе и сохраненным данным.'},
@@ -547,7 +589,6 @@ const defaultTour = [
 let step = 0;
 
 document.addEventListener('click', async event => {
-  const nav = event.target.closest('.nav-item');
   const goButton = event.target.closest('[data-go]');
   const studentButton = event.target.closest('[data-student]');
   const achievementButton = event.target.closest('[data-achievement]');
@@ -558,7 +599,6 @@ document.addEventListener('click', async event => {
   const roleChoice = event.target.closest('[data-role]');
   const reviewButton = event.target.closest('[data-review]');
   const healthSave = event.target.closest('[data-save-health]');
-  if (nav) go(nav.dataset.view);
   if (goButton) {
     go(goButton.dataset.go, goButton.dataset.mode, goButton.dataset.field);
     if (goButton.dataset.kind) {
@@ -584,7 +624,7 @@ document.addEventListener('click', async event => {
     if (student) { student.present=attendanceButton.dataset.set==='true'; render(); }
   }
   if (roleChoice) {
-    try { await api('/api/demo-role','POST',{role:roleChoice.dataset.role}); appSession=await api('/api/session'); selectedRole=appSession.role; showRole(); go('roleHome'); if(selectedRole==='Студент')await loadStudentPortal();else await load(); }
+    try { await api('/api/demo-role','POST',{role:roleChoice.dataset.role}); location.reload(); }
     catch(error){toast(error.message);}
   }
   if (reviewButton) {
@@ -641,12 +681,23 @@ $('#submitStudentData').onclick=async()=>{
   if(category&&!studentData?.registered)return toast('Сначала дождитесь подтверждения профиля; достижение можно подать вместе с первичной регистрацией.');
   const data=category?{category,sport_type:$('#submissionSport').value,distinction:$('#submissionDistinction').value,age_group:$('#submissionAgeGroup').value,birth_date:studentData?.student?.birth_date,team_name:$('#submissionTeam').value,section:$('#submissionSection').value,event_name:$('#submissionEvent').value,event_status:$('#submissionEventStatus').value,participant_role:$('#submissionRole').value,event_result:$('#submissionResult').value,record_date:$('#submissionDate').value,order_basis:$('#submissionOrder').value}:{name:$('#submissionName').value.trim(),birth_date:$('#submissionBirth').value,faculty:$('#submissionFaculty').value.trim(),course:Number($('#submissionCourse').value),group_code:$('#submissionGroup').value,health:$('#submissionHealth').value,sport_before:$('#submissionSportBefore').value.trim(),elective:$('#submissionElective').value.trim(),personal_data_consent:$('#submissionConsent').checked};
   if (!category) {
+    if (data.name.split(/\s+/).length < 2 || !data.birth_date || !data.faculty || !data.course || !data.group_code) {
+      go('studentPortal','0','submissionName');
+      return toast('Заполните ФИО, дату рождения, факультет, курс и группу.');
+    }
+    if (!data.personal_data_consent) {
+      go('studentPortal','0','submissionConsent');
+      return toast('Подтвердите согласие на обработку данных.');
+    }
     data.elective_semester = $('#submissionSemester').value;
     data.prior_rank = $('#submissionPriorRank').value;
     data.prior_gto = $('#submissionPriorGto').value;
     const returned = studentData?.draft || studentData?.submission;
     if (returned?.status === 'Отклонено' && returned.has_health_document) data.reuse_health_document_from = returned.id;
-    if (data.elective && !data.elective_semester) return toast('Выберите семестр элективной дисциплины.');
+    if (Boolean(data.elective) !== Boolean(data.elective_semester)) {
+      go('studentPortal','0','submissionElective');
+      return toast('Укажите элективную дисциплину и её семестр.');
+    }
   }
   const file=$(category?'#submissionDocument':'#submissionHealthDocument').files[0];
   if(file){if(file.type!=='application/pdf'||file.size>3*1024*1024)return toast('Приложите PDF до 3 МБ.');const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Не удалось прочитать PDF.'));reader.readAsDataURL(file);});const prefix=category?'':'health_';data[prefix+'document_name']=file.name;data[prefix+'document_base64']=String(dataUrl).split(',')[1]||'';}
@@ -720,4 +771,9 @@ for (const id of ['saveAchievement','saveAchievementEdit','saveStudent','saveStu
   const button = $('#'+id), action = button.onclick;
   button.onclick = event => runFormAction(button, () => action(event)).catch(error => toast(error.message));
 }
-initializeApp().catch(error=>toast(error.message || 'Не удалось открыть базу данных.'));
+$('.brand').onclick = event => { event.preventDefault(); go('roleHome'); };
+$('#retryWorkspace').onclick = () => location.reload();
+initializeApp().catch(error=>{
+  $('#workspaceLoading').textContent = error.message || 'Не удалось загрузить рабочее место.';
+  $('#workspaceRecovery').hidden = false;
+});
