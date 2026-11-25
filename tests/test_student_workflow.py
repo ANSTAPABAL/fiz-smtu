@@ -44,47 +44,72 @@ class StudentWorkflowTest(unittest.TestCase):
                     connection.close()
 
             pdf = b"%PDF-1.4\n"
+            encoded = base64.b64encode(pdf).decode()
             profile = {"name": "Демонстрационный Студент", "email": "student@example.test",
                        "password": "test-student-password", "group_code": "demo",
                        "birth_date": "2000-01-01", "faculty": "Тестовый факультет", "course": 1,
-                       "health": "основная", "elective": "Плавание", "elective_semester": "2",
-                       "prior_rank": "б/р", "prior_gto": "Золотой знак", "personal_data_consent": True,
-                       "health_document_name": "test.pdf", "health_document_base64": base64.b64encode(pdf).decode()}
+                       "sport_before": "Плавание", "prior_rank": "Первый разряд",
+                       "prior_gto": "Золотой знак", "personal_data_consent": True,
+                       "prior_document_name": "rank.pdf", "prior_document_base64": encoded}
             _, student = request("/api/register", 201, profile)
+            request("/api/register", 400, profile)
             _, reviewer = request("/api/login", data={"username": "test-reviewer",
                                   "password": "test-reviewer-password", "role": server.ROLES[3]})
 
             def pending():
                 items, _ = request("/api/pending-submissions", cookie=reviewer)
+                self.assertEqual(len(items["submissions"]), 1)
                 return items["submissions"][0]
+
+            def review(item, status, note=""):
+                return request(f"/api/review-submission/{item['id']}",
+                               data={"status": status, "note": note}, cookie=reviewer)
 
             item = pending()
             self.assertEqual(item["group_name"], "Демо-01")
-            self.assertTrue(item["has_health_document"])
-            self.assertNotIn("health_document_base64", item["payload"])
-            path = f"/api/submission-document/{item['id']}?kind=health"
-            request(path, 403, cookie=student)
-            self.assertEqual(request(path, cookie=reviewer)[0], pdf)
-            request(f"/api/review-submission/{item['id']}", data={"status": "Отклонено", "note": "Поправьте"}, cookie=reviewer)
+            self.assertTrue(item["has_prior_document"])
+            self.assertNotIn("health", item["payload"])
+            self.assertNotIn("elective", item["payload"])
+            proof = f"/api/submission-document/{item['id']}?kind=prior"
+            request(proof, 403, cookie=student)
+            self.assertEqual(request(proof, cookie=reviewer)[0], pdf)
+            choice = {"health": "основная", "elective": "Плавание", "elective_semester": "2"}
+            request("/api/student-submissions", 400, choice, student)
+            review(item, "Отклонено", "Поправьте регистрацию")
             self.assertEqual(notify.call_args.args[0], profile["email"])
             current, _ = request("/api/student-data", cookie=student)
-            self.assertEqual(current["submission"]["payload"]["elective"], "Плавание")
-            self.assertEqual(current["submission"]["review_note"], "Поправьте")
-            profile.pop("password")
-            profile.pop("health_document_base64")
-            profile.pop("health_document_name")
-            profile["reuse_health_document_from"] = item["id"]
-            for semester, elective in (("2", "Плавание"), ("3", "Фитнес")):
-                request("/api/student-submissions", 201, dict(profile, elective_semester=semester, elective=elective), student)
-                item = pending()
-                self.assertTrue(item["has_health_document"])
-                path = f"/api/review-submission/{item['id']}"
-                request(path, data={"status": "Подтверждено"}, cookie=reviewer)
-                request(path, 400, {"status": "Подтверждено"}, reviewer)
+            self.assertEqual(current["submission"]["review_note"], "Поправьте регистрацию")
+            correction = {key: value for key, value in profile.items() if key not in ("password", "prior_document_base64")}
+            correction["correct_registration"] = True
+            request("/api/register", 201, correction, student)
+            request("/api/register", 400, correction, student)
+            item = pending()
+            self.assertTrue(item["has_prior_document"])
+            review(item, "Подтверждено")
+
+            request("/api/student-submissions", 400, choice, student)
+            request("/api/student-submissions", 400, dict(choice, elective_semester="1", health_document_base64=encoded), student)
+            request("/api/student-submissions", 201, dict(choice, health_document_name="health.pdf", health_document_base64=encoded), student)
+            request("/api/student-submissions", 400, dict(choice, health_document_base64=encoded), student)
+            item = pending()
+            self.assertEqual(item["payload"]["kind"], "health_elective")
+            self.assertEqual(item["student_name"], profile["name"])
+            self.assertEqual(item["group_name"], "Демо-01")
+            self.assertNotIn("name", item["payload"])
+            self.assertNotIn("health_document_base64", item["payload"])
+            proof = f"/api/submission-document/{item['id']}?kind=health"
+            request(proof, 403, cookie=student)
+            self.assertEqual(request(proof, cookie=reviewer)[0], pdf)
+            review(item, "Отклонено", "Поправьте электив")
+            request("/api/student-submissions", 201, dict(choice, elective="Фитнес"), student)
+            item = pending()
+            self.assertTrue(item["has_health_document"])
+            review(item, "Подтверждено")
+            request("/api/student-submissions", 400, dict(choice, health_document_base64=encoded), student)
             current, _ = request("/api/student-data", cookie=student)
-            self.assertEqual(current["electives"], {"2": "Плавание", "3": "Фитнес"})
-            self.assertEqual(current["student"]["prior_rank"], "б/р")
-            self.assertEqual([award["distinction"] for award in current["achievements"]], ["Золотой знак"])
+            self.assertEqual(current["electives"], {"2": "Фитнес"})
+            self.assertEqual(current["student"]["prior_rank"], "Первый разряд")
+            self.assertEqual(set(award["distinction"] for award in current["achievements"]), {"Первый разряд", "Золотой знак"})
             summary, _ = request("/api/group-health-summary", cookie=reviewer)
             self.assertEqual(summary["rows"], [{"faculty": "Тестовый факультет", "group_name": "Демо-01",
                                                "health": "основная", "elective": "Фитнес", "total": 1}])
