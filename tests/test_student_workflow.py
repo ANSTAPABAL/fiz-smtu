@@ -50,6 +50,9 @@ class StudentWorkflowTest(unittest.TestCase):
                        "birth_date": "2000-01-01", "faculty": "Тестовый факультет", "course": 1,
                        "sport_before": "Плавание", "prior_rank": "Первый разряд",
                        "prior_gto": "Золотой знак", "personal_data_consent": True,
+                       "gto_document_name": "gto.pdf", "gto_document_base64": encoded,
+                       "achievement_text": "Первое место на Чемпионате Пермской области по лыжным гонкам на 5 км, 15.01.2024 г.",
+                       "document_name": "achievement.pdf", "document_base64": encoded,
                        "prior_document_name": "rank.pdf", "prior_document_base64": encoded}
             _, student = request("/api/register", 201, profile)
             request("/api/register", 400, profile)
@@ -68,6 +71,12 @@ class StudentWorkflowTest(unittest.TestCase):
             item = pending()
             self.assertEqual(item["group_name"], "Демо-01")
             self.assertTrue(item["has_prior_document"])
+            self.assertTrue(item["has_gto_document"])
+            self.assertNotIn("gto_document_base64", item["payload"])
+            self.assertEqual(item["payload"]["achievement_text"], profile["achievement_text"])
+            gto_proof = f"/api/submission-document/{item['id']}?kind=gto"
+            request(gto_proof, 403, cookie=student)
+            self.assertEqual(request(gto_proof, cookie=reviewer)[0], pdf)
             self.assertNotIn("health", item["payload"])
             self.assertNotIn("elective", item["payload"])
             proof = f"/api/submission-document/{item['id']}?kind=prior"
@@ -79,12 +88,14 @@ class StudentWorkflowTest(unittest.TestCase):
             self.assertEqual(notify.call_args.args[0], profile["email"])
             current, _ = request("/api/student-data", cookie=student)
             self.assertEqual(current["submission"]["review_note"], "Поправьте регистрацию")
-            correction = {key: value for key, value in profile.items() if key not in ("password", "prior_document_base64")}
+            correction = {key: value for key, value in profile.items() if key not in ("password", "prior_document_base64", "gto_document_base64", "document_base64")}
             correction["correct_registration"] = True
             request("/api/register", 201, correction, student)
             request("/api/register", 400, correction, student)
             item = pending()
             self.assertTrue(item["has_prior_document"])
+            self.assertTrue(item["has_gto_document"])
+            self.assertTrue(item["has_document"])
             review(item, "Подтверждено")
 
             request("/api/student-submissions", 400, choice, student)
@@ -109,7 +120,8 @@ class StudentWorkflowTest(unittest.TestCase):
             current, _ = request("/api/student-data", cookie=student)
             self.assertEqual(current["electives"], {"2": "Фитнес"})
             self.assertEqual(current["student"]["prior_rank"], "Первый разряд")
-            self.assertEqual(set(award["distinction"] for award in current["achievements"]), {"Первый разряд", "Золотой знак"})
+            self.assertEqual({award["distinction"] for award in current["achievements"] if award["distinction"]}, {"Первый разряд", "Золотой знак"})
+            self.assertTrue(any(award["details"] == profile["achievement_text"] for award in current["achievements"]))
             summary, _ = request("/api/group-health-summary", cookie=reviewer)
             self.assertEqual(summary["rows"], [{"faculty": "Тестовый факультет", "group_name": "Демо-01",
                                                "health": "основная", "elective": "Фитнес", "total": 1}])

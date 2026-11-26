@@ -378,6 +378,7 @@ def validate_student_profile(profile):
             raise ValueError("Выберите спортивный разряд или знак ГТО из списка.")
     decode_pdf(profile.get("health_document_base64"))
     decode_pdf(profile.get("prior_document_base64"))
+    decode_pdf(profile.get("gto_document_base64"))
 
 def student_profile_history(email):
     profiles = []
@@ -386,7 +387,7 @@ def student_profile_history(email):
         if payload.get("kind") not in ("profile", "health_elective"):
             continue
         item["has_health_document"] = bool(payload.get("health_document_base64"))
-        for field in ("document_base64", "health_document_base64", "prior_document_base64"):
+        for field in ("document_base64", "health_document_base64", "prior_document_base64", "gto_document_base64"):
             payload.pop(field, None)
         item["payload"] = payload
         profiles.append(item)
@@ -525,6 +526,7 @@ class App(SimpleHTTPRequestHandler):
                 item["has_document"] = bool(item["payload"].pop("document_base64", None))
                 item["has_health_document"] = bool(item["payload"].pop("health_document_base64", None))
                 item["has_prior_document"] = bool(item["payload"].pop("prior_document_base64", None))
+                item["has_gto_document"] = bool(item["payload"].pop("gto_document_base64", None))
                 item["group_name"] = groups.get(item["payload"].get("group_code") or item.pop("student_group"))
                 item.pop("student_group", None)
                 data.append(item)
@@ -534,7 +536,7 @@ class App(SimpleHTTPRequestHandler):
             submission_id = path.rsplit("/", 1)[1]
             records = rows("SELECT payload FROM student_submissions WHERE id=?", (int(submission_id),)) if submission_id.isascii() and submission_id.isdecimal() else []
             payload = json.loads(records[0]["payload"]) if records else {}
-            prefix = {"health":"health_", "prior":"prior_"}.get(query.get("kind", [""])[0], "")
+            prefix = {"health":"health_", "prior":"prior_", "gto":"gto_"}.get(query.get("kind", [""])[0], "")
             try: raw = decode_pdf(payload.get(prefix+"document_base64"))
             except ValueError: raw = None
             if not raw:
@@ -773,8 +775,26 @@ class App(SimpleHTTPRequestHandler):
                 profile["name"] = name
                 if not profile["prior_document_base64"] and all(profile[key] == previous.get(key) for key in ("prior_rank","sport_before")):
                     for key in ("prior_document_base64","prior_document_name"): profile[key] = previous.get(key)
+                for key in ("gto_document_base64","gto_document_name"):
+                    profile[key] = data.get(key)
+                if not profile["gto_document_base64"] and profile["prior_gto"] == previous.get("prior_gto"):
+                    for key in ("gto_document_base64","gto_document_name"): profile[key] = previous.get(key)
+                if profile["gto_document_base64"] and not profile["prior_gto"]:
+                    raise ValueError("Выберите знак ГТО для приложенного документа.")
+                if "achievement_text" in data:
+                    description = data["achievement_text"]
+                    if not isinstance(description, str) or len(description.strip()) > 1000:
+                        raise ValueError("Опишите достижение в пределах 1000 символов.")
+                    profile["achievement_text"] = description.strip()
+                    for key in ("document_base64","document_name"):
+                        profile[key] = data.get(key)
+                    legacy_text = " · ".join(str(previous[key]) for key in ("category","distinction","sport_type","team_name","section","event_name","event_result","record_date") if previous.get(key))
+                    if not profile["document_base64"] and profile["achievement_text"] == previous.get("achievement_text", legacy_text):
+                        for key in ("document_base64","document_name"): profile[key] = previous.get(key)
+                    if decode_pdf(profile["document_base64"]) and not profile["achievement_text"]:
+                        raise ValueError("Опишите спортивное достижение, к которому приложен документ.")
                 validate_student_profile(profile)
-                if data.get("category"):
+                if data.get("category") and "achievement_text" not in data:
                     validate_achievement_choice(data)
                     decode_pdf(data.get("document_base64"))
                     profile.update({key:data.get(key) for key in ("category","sport_type","distinction","age_group","team_name","section","event_name","event_status","participant_role","event_result","record_date","order_basis","document_name","document_base64")})
@@ -871,9 +891,13 @@ class App(SimpleHTTPRequestHandler):
                             con.execute("DELETE FROM achievements WHERE student_id=? AND category=? AND details=?", (student_id,category,label))
                             distinction = payload[field]
                             if distinction and distinction != "б/р":
-                                proof = decode_pdf(payload.get("prior_document_base64")) if field == "prior_rank" else None
+                                prefix = "prior_" if field == "prior_rank" else "gto_"
+                                proof = decode_pdf(payload.get(prefix+"document_base64"))
                                 con.execute("INSERT INTO achievements(student_id,category,details,record_date,status,distinction,sport_type,document_name,document_data) VALUES(?,?,?,?,?,?,?,?,?)",
-                                            (student_id,category,label,date.today().isoformat(),"Подтверждено",distinction,payload.get("sport_before") if field == "prior_rank" else None,payload.get("prior_document_name") if proof else None,proof))
+                                            (student_id,category,label,date.today().isoformat(),"Подтверждено",distinction,payload.get("sport_before") if field == "prior_rank" else None,payload.get(prefix+"document_name") if proof else None,proof))
+                        if payload.get("achievement_text"):
+                            con.execute("INSERT INTO achievements(student_id,category,details,record_date,status,document_name,document_data) VALUES(?,?,?,?,?,?,?)",
+                                        (student_id,"Спортивное достижение",payload["achievement_text"],date.today().isoformat(),"Подтверждено",payload.get("document_name"),decode_pdf(payload.get("document_base64"))))
                         if payload.get("category"):
                             category=payload["category"]
                             if category not in ACHIEVEMENT_CATEGORIES: raise ValueError("Неизвестный раздел достижения.")
