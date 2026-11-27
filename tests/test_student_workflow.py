@@ -20,6 +20,8 @@ class StudentWorkflowTest(unittest.TestCase):
             con = server.connect()
             con.execute("INSERT INTO academic_groups(group_code,display_code,faculty,course) VALUES(?,?,?,?)",
                         ("demo", "Демо-01", "Тестовый факультет", 1))
+            con.execute("INSERT INTO students(name,group_code,health,elective,attendance,theory,practice) VALUES(?,?,?,?,0,?,?)",
+                        ("Студент из ИСУ", "demo", "основная", "Фитнес", "не указано", "не указано"))
             con.commit()
             con.close()
             httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.App)
@@ -69,6 +71,10 @@ class StudentWorkflowTest(unittest.TestCase):
                                data={"status": status, "note": note}, cookie=reviewer)
 
             item = pending()
+            registrations, _ = request("/api/pending-submissions?kind=profile", cookie=reviewer)
+            health_queue, _ = request("/api/pending-submissions?kind=health_elective", cookie=reviewer)
+            self.assertEqual([row["id"] for row in registrations["submissions"]], [item["id"]])
+            self.assertEqual(health_queue["submissions"], [])
             self.assertEqual(item["group_name"], "Демо-01")
             self.assertTrue(item["has_prior_document"])
             self.assertTrue(item["has_gto_document"])
@@ -104,6 +110,11 @@ class StudentWorkflowTest(unittest.TestCase):
             request("/api/student-submissions", 400, dict(choice, health_document_base64=encoded), student)
             item = pending()
             self.assertEqual(item["payload"]["kind"], "health_elective")
+            self.assertEqual(request("/api/pending-submissions?kind=profile", cookie=reviewer)[0]["submissions"], [])
+            self.assertEqual(request("/api/pending-submissions?kind=health_elective", cookie=reviewer)[0]["submissions"][0]["id"], item["id"])
+            before, _ = request("/api/group-health-summary", cookie=reviewer)
+            self.assertEqual(before["rows"][0]["health_approved"], 0)
+            self.assertEqual(before["rows"][0]["elective_approved"], 0)
             self.assertEqual(item["student_name"], profile["name"])
             self.assertEqual(item["group_name"], "Демо-01")
             self.assertNotIn("name", item["payload"])
@@ -123,5 +134,12 @@ class StudentWorkflowTest(unittest.TestCase):
             self.assertEqual({award["distinction"] for award in current["achievements"] if award["distinction"]}, {"Первый разряд", "Золотой знак"})
             self.assertTrue(any(award["details"] == profile["achievement_text"] for award in current["achievements"]))
             summary, _ = request("/api/group-health-summary", cookie=reviewer)
-            self.assertEqual(summary["rows"], [{"faculty": "Тестовый факультет", "group_name": "Демо-01",
-                                               "health": "основная", "elective": "Фитнес", "total": 1}])
+            self.assertEqual(summary["rows"], [{"group_code": "demo", "group_name": "Демо-01",
+                                               "total": 2, "health_approved": 1, "elective_approved": 1}])
+            request("/api/group-health-summary?group=demo", 403, cookie=student)
+            details, _ = request("/api/group-health-summary?group=demo", cookie=reviewer)
+            members = {row["name"]: row for row in details["rows"]}
+            self.assertEqual(members[profile["name"]]["elective"], "Фитнес")
+            self.assertEqual(members[profile["name"]]["health_approved"], 1)
+            self.assertEqual(members["Студент из ИСУ"]["health_approved"], 0)
+            self.assertEqual(members["Студент из ИСУ"]["elective_approved"], 0)

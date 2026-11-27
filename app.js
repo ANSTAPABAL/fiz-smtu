@@ -101,7 +101,10 @@ const workspaceSections = {
       ['achievements','Спортивное мероприятие','event']
     ],[['students','Карточка студента'],['groupCard','Карточка группы'],['reports','Сводные данные']]],
     "Студент":[[['studentPortal','Группа здоровья и элективная дисциплина']], [['studentPortal','Карточка студента']]],
-    "Ответственный исполнитель кафедры ФВ":[[['approvals','Проверка заявок студентов'],['health','Группы здоровья']],[['reports','Сводные данные']]]
+    "Ответственный исполнитель кафедры ФВ":[[
+      ['approvals','Проверка и утверждение регистрации студента','','profile'],
+      ['approvals','Утверждение группы здоровья и элективной дисциплины ФКиС','','health_elective']
+    ],[['reports','Сводные данные']]]
 };
 let studentPortalRequest;
 function showRole() {
@@ -187,13 +190,42 @@ async function renderConsolidated() {
   $('#consolidatedBody').closest('article').hidden = executor;
   $('#exportReport').hidden = executor;
   $('#groupHealthSummary').hidden = !executor;
+  $('#groupHealthDetails').hidden = true;
   if (executor) {
+    const tbody = $('#groupHealthSummary tbody');
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Загружаем сводку…</td></tr>';
     const {rows} = await api('/api/group-health-summary');
-    $('#groupHealthSummary tbody').innerHTML = rows.map(row=>`<tr>${[row.faculty,row.group_name,row.health,row.elective,row.total].map(value=>`<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="5" class="empty-state">Группы пока не загружены.</td></tr>';
+    tbody.innerHTML = rows.map(row=>{
+      const percent = count => `${Math.round(100 * Number(count) / Number(row.total))}% (${count} из ${row.total})`;
+      const cells = [row.group_name,row.total,percent(row.health_approved),percent(row.elective_approved)];
+      return `<tr>${cells.map(value=>`<td>${escapeHtml(value)}</td>`).join('')}<td><button class="detail-button" data-health-group="${escapeHtml(row.group_code)}" data-group-name="${escapeHtml(row.group_name)}" aria-label="Подробнее о группе ${escapeHtml(row.group_name)}">Подробнее</button></td></tr>`;
+    }).join('') || '<tr><td colspan="5" class="empty-state">Группы пока не загружены.</td></tr>';
     return;
   }
   const {rows}=await api('/api/consolidated');
   $('#consolidatedBody').innerHTML=rows.map(row=>`<tr class="summary-${escapeHtml(row.level)}">${[row.label,row.total,row.main_health,row.prep_health,row.special_health,row.theory_credit,row.theory_no_credit,row.practice_credit,row.practice_no_credit,row.overall_grade||'—',row.teams,row.gto_gold,row.gto_silver,row.gto_bronze,row.gto_none,row.ms,row.kms,row.rank1,row.rank2,row.rank3,row.rank_none,row.sport_achievements,row.participants,row.volunteers].map(value=>`<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('')||'<tr><td colspan="24" class="empty-state">Данных пока нет.</td></tr>';
+}
+let healthDetailsRequest = 0;
+async function openHealthDetails(button) {
+  const request = ++healthDetailsRequest;
+  const tbody = $('#groupHealthDetails tbody');
+  $('#groupHealthTitle').textContent = `Студенты группы ${button.dataset.groupName}`;
+  $('#groupHealthSummary').hidden = true;
+  $('#groupHealthDetails').hidden = false;
+  tbody.innerHTML = '<tr><td colspan="4" class="empty-state">Загружаем список…</td></tr>';
+  $('#backToHealthSummary').focus();
+  let rows;
+  try {
+    ({rows} = await api(`/api/group-health-summary?group=${encodeURIComponent(button.dataset.healthGroup)}`));
+  } catch (error) {
+    if (request === healthDetailsRequest) tbody.querySelector('.empty-state').textContent = error.message;
+    return;
+  }
+  if (request !== healthDetailsRequest) return;
+  const value = (text, approved) => text && text !== 'не указана'
+    ? `${escapeHtml(text)}<br><small>${approved ? 'Утверждено' : 'Не утверждено'}</small>` : '—';
+  tbody.innerHTML = rows.map((row,index)=>`<tr><td>${index+1}</td><td>${escapeHtml(row.name)}</td><td>${value(row.health,row.health_approved)}</td><td>${value(row.elective,row.elective_approved)}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="empty-state">В группе нет студентов.</td></tr>';
 }
 function applyStudentFilter() {
   document.querySelectorAll('#studentsBody tr').forEach((row,index) => {
@@ -272,8 +304,12 @@ function openStudentSection(mode) {
   $('#studentCardData').closest('article').hidden = !results;
   $('#studentPortal h1').textContent = results ? 'Карточка студента' : 'Группа здоровья и элективная дисциплина';
 }
+let approvalKind = 'profile', approvalRequest = 0;
 async function loadApprovals() {
-  const {submissions}=await api('/api/pending-submissions');
+  const request = ++approvalRequest;
+  $('#approvalList').innerHTML = '<article class="panel empty-state">Загружаем заявки…</article>';
+  const {submissions}=await api(`/api/pending-submissions?kind=${approvalKind}`);
+  if (request !== approvalRequest) return;
   $('#approvalList').innerHTML=submissions.map(item=>{
     const p=item.payload||{};
     const profile = p.kind === 'profile' ? [
@@ -348,7 +384,11 @@ function go(view, mode, field) {
   $('#groupPickerRow').hidden = !['dashboard','students','attendance','physical','achievements','groupCard','health'].includes(view);
   if (view === 'attendance') resetAttendanceFlow();
   if (view === 'reports') renderConsolidated().catch(error=>toast(error.message));
-  if (view === 'approvals') loadApprovals().catch(error=>toast(error.message));
+  if (view === 'approvals') {
+    approvalKind = field === 'health_elective' ? field : 'profile';
+    $('#approvals h1').textContent = workspaceSections[selectedRole][0].find(action=>action[3]===approvalKind)[1];
+    loadApprovals().catch(error=>toast(error.message));
+  }
   if (view === 'studentPortal') {
     openStudentSection(mode);
     if (!studentData) {
@@ -360,7 +400,7 @@ function go(view, mode, field) {
     }
   }
   scrollTo({top:0,behavior:'smooth'});
-  if (field) requestAnimationFrame(() => {
+  if (field && view !== 'approvals') requestAnimationFrame(() => {
     const input = document.getElementById(field);
     input?.focus({preventScroll:true});
     input?.scrollIntoView({block:'nearest',behavior:'smooth'});
@@ -541,6 +581,8 @@ document.addEventListener('click', async event => {
   const roleChoice = event.target.closest('[data-role]');
   const reviewButton = event.target.closest('[data-review]');
   const healthSave = event.target.closest('[data-save-health]');
+  const healthGroup = event.target.closest('[data-health-group]');
+  if (healthGroup) openHealthDetails(healthGroup);
   if (goButton) {
     go(goButton.dataset.go, goButton.dataset.mode, goButton.dataset.field);
     if (goButton.dataset.kind) {
@@ -714,6 +756,11 @@ for (const id of ['saveAchievement','saveAchievementEdit','saveStudent','saveStu
   button.onclick = event => runFormAction(button, () => action(event)).catch(error => toast(error.message));
 }
 $('.brand').onclick = event => { event.preventDefault(); go('roleHome'); };
+$('#backToHealthSummary').onclick = () => {
+  $('#groupHealthDetails').hidden = true;
+  $('#groupHealthSummary').hidden = false;
+  $('#groupHealthSummary [data-health-group]')?.focus();
+};
 $('#retryWorkspace').onclick = () => location.reload();
 initializeApp().catch(error=>{
   $('#workspaceLoading').textContent = error.message || 'Не удалось загрузить рабочее место.';

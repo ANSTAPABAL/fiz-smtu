@@ -516,6 +516,7 @@ class App(SimpleHTTPRequestHandler):
             self.send_json({"submissions":rows("SELECT id,status,review_note,created_at,reviewed_at FROM student_submissions WHERE email=? ORDER BY id DESC",(session["username"],))}); return
         if path == "/api/pending-submissions":
             if self.role_required("Ответственный исполнитель кафедры ФВ"): return
+            kind = query.get("kind", [""])[0]
             data=[]
             groups = {row["group_code"]:row["display_code"] for row in rows("SELECT group_code,display_code FROM academic_groups")}
             for item in rows("""SELECT q.id,q.email,q.payload,q.status,q.created_at,s.name AS student_name,s.group_code AS student_group
@@ -523,6 +524,8 @@ class App(SimpleHTTPRequestHandler):
                                 LEFT JOIN students s ON s.id=a.student_id WHERE q.status='На проверке' ORDER BY q.created_at,q.id"""):
                 try: item["payload"]=json.loads(item["payload"])
                 except (ValueError,TypeError): item["payload"]={}
+                item_kind = item["payload"].get("kind")
+                if kind and item_kind != kind and (kind,item_kind) != ("profile","achievement"): continue
                 item["has_document"] = bool(item["payload"].pop("document_base64", None))
                 item["has_health_document"] = bool(item["payload"].pop("health_document_base64", None))
                 item["has_prior_document"] = bool(item["payload"].pop("prior_document_base64", None))
@@ -550,13 +553,38 @@ class App(SimpleHTTPRequestHandler):
             self.end_headers(); self.wfile.write(raw); return
         if path == "/api/group-health-summary":
             if self.role_required("Ответственный исполнитель кафедры ФВ"): return
-            self.send_json({"rows":rows("""
-                SELECT COALESCE(NULLIF(g.faculty,''),NULLIF(s.faculty,''),'Не указан') AS faculty,
-                       COALESCE(g.display_code,s.group_code) AS group_name,
-                       COALESCE(NULLIF(s.health,''),'не указана') AS health,
-                       COALESCE(NULLIF(s.elective,''),'не указана') AS elective, COUNT(*) AS total
-                FROM students s LEFT JOIN academic_groups g ON g.group_code=s.group_code
-                GROUP BY 1,2,3,4 ORDER BY 1,2,3,4
+            group = query.get("group", [""])[0]
+            kind, health, elective = (
+                [f"(q.payload::jsonb ->> '{field}')" if DATABASE_URL else f"json_extract(q.payload,'$.{field}')"
+                 for field in ("kind","health","elective")]
+            )
+            roster = f"""
+                WITH approved AS (
+                    SELECT a.student_id, {health} AS health, {elective} AS elective,
+                           ROW_NUMBER() OVER(PARTITION BY a.student_id ORDER BY q.reviewed_at DESC NULLS LAST, q.id DESC) AS position
+                    FROM student_submissions q JOIN student_accounts a ON a.email=q.email
+                    WHERE q.status='Подтверждено' AND a.student_id IS NOT NULL
+                      AND ({kind}='health_elective' OR ({kind}='profile'
+                           AND (NULLIF({health},'') IS NOT NULL OR NULLIF({elective},'') IS NOT NULL)))
+                ), roster AS (
+                    SELECT s.id,s.name,s.list_position,s.group_code,COALESCE(g.display_code,s.group_code) AS group_name,
+                           s.health,s.elective,
+                           CASE WHEN s.health IN ('основная','подготовительная','специальная')
+                                     AND s.health=a.health THEN 1 ELSE 0 END AS health_approved,
+                           CASE WHEN NULLIF(TRIM(s.elective),'') IS NOT NULL
+                                     AND s.elective=a.elective THEN 1 ELSE 0 END AS elective_approved
+                    FROM students s LEFT JOIN academic_groups g ON g.group_code=s.group_code
+                    LEFT JOIN approved a ON a.student_id=s.id AND a.position=1
+                )
+            """
+            if group:
+                members = rows(roster + """SELECT name,group_name,health,elective,health_approved,elective_approved
+                    FROM roster WHERE group_code=? ORDER BY COALESCE(list_position,2147483647),name,id""", (group,))
+                self.send_json({"rows":members}); return
+            self.send_json({"rows":rows(roster + """
+                SELECT group_code,group_name,COUNT(*) AS total,SUM(health_approved) AS health_approved,
+                       SUM(elective_approved) AS elective_approved
+                FROM roster GROUP BY group_code,group_name ORDER BY group_name,group_code
             """)}); return
         if path == "/api/attendance-options":
             self.send_json({"disciplines":FITNESS_DISCIPLINES,"lesson_types":LESSON_TYPES,"elective_activities":FITNESS_ACTIVITIES}); return

@@ -77,7 +77,11 @@
       <section id="reports" class="view">
         <article id="groupHealthSummary" class="panel table-wrap" hidden>
           <h2>Группы здоровья и элективные дисциплины</h2>
-          <table><thead><tr><th>Факультет</th><th>Группа</th><th>Группа здоровья</th><th>Элективная дисциплина ФКиС</th><th>Студентов</th></tr></thead><tbody></tbody></table>
+          <table><thead><tr><th>Учебная группа</th><th>Студентов</th><th>Утверждено групп здоровья</th><th>Утверждено элективов</th><th>Список студентов</th></tr></thead><tbody></tbody></table>
+        </article>
+        <article id="groupHealthDetails" class="panel" hidden>
+          <div class="panel-head"><h2 id="groupHealthTitle">Список студентов</h2><button id="backToHealthSummary" class="secondary-button">← К сводке</button></div>
+          <div class="table-wrap"><table><thead><tr><th>№</th><th>Студент</th><th>Группа здоровья</th><th>Элективная дисциплина ФКиС</th></tr></thead><tbody></tbody></table></div>
         </article>
         <div class="breadcrumbs">Главная <span>/</span> Результаты <span>/</span> Сводные данные</div>
         <div class="page-heading"><div><h1>Сводные данные по СПбГМТУ</h1><p>Осенний семестр 2026 · итоги по загруженным группам</p></div><div class="heading-actions"><button class="secondary-button" id="exportReport">⇩ Скачать XLSX</button></div></div>
@@ -112,7 +116,7 @@
   <div class="tour-mask" id="tourMask" hidden aria-live="polite"><div class="tour-spotlight" id="tourSpotlight"></div><div class="tour-card"><span class="tour-count" id="tourCount">1 из 4</span><button class="close-modal" id="closeTour" aria-label="Закрыть обучение">×</button><h2 id="tourTitle"></h2><p id="tourText"></p><div class="tour-actions"><button class="link-button" id="tourSkip">Пропустить</button><button class="primary-button" id="tourNext">Далее</button></div></div></div>
   <div class="toast" id="toast" role="status"></div>
   <script src="form-actions.js?v=20261012"></script>
-  <script src="app.js?v=registration-proof"></script>
+  <script src="app.js?v=executor-queues"></script>
   <script src="group-picker.js?v=20261010-workspace"></script>
   <script src="achievement-filters.js?v=20260923-categories"></script>
 </body>
